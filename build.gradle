@@ -1,0 +1,143 @@
+plugins {
+    id 'fabric-loom' version '1.14.10'
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.fabricmc.net/' }
+    maven { url = 'https://jitpack.io' }
+    maven { url = 'https://babbaj.github.io/maven/' }
+    maven { url = 'https://repo.redlance.org/public' }
+}
+
+// Подключается ПОСЛЕ repositories: скрипт резолвит артефакты на этапе конфигурации (см. пояснение в
+// нём же), поэтому выше этого блока com.zigythebird с jitpack ещё не разрешается и сборка падает с
+// «Could not find com.zigythebird:mochafloats».
+apply from: 'gradle/relocate-mocha.gradle'
+
+def bundledModJars = [
+    'baritone-meteor-1.21.11.jar',
+    'zenith-addon-api-1.0-SNAPSHOT.jar',
+    'zenith-addon-runtime-1.0-SNAPSHOT.jar'
+]
+
+def sanitizeShadedRuntime = tasks.register('sanitizeShadedRuntime', Zip) {
+    archiveFileName = 'shaded-runtime-sanitized.jar'
+    destinationDirectory = layout.buildDirectory.dir('sanitized-libs')
+    from(zipTree(file('libs/shaded-runtime.jar'))) {
+        // Minecraft 1.21.11 supplies newer, binary-compatible versions.
+        exclude 'org/apache/commons/lang3/**'
+        exclude 'io/netty/**'
+        exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
+    }
+}
+
+def sanitizedShadedRuntime = files(sanitizeShadedRuntime.flatMap { it.archiveFile })
+sanitizedShadedRuntime.builtBy(sanitizeShadedRuntime)
+
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings 'net.fabricmc:yarn:1.21.11+build.6:v2'
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    // Библиотека анимаций подключается ПЕРЕУПАКОВАННОЙ: её пакет mocha конфликтует с mocha из
+    // ViaFabricPlus. Подробности и замер — в gradle/relocate-mocha.gradle.
+    //
+    // Компиляция идёт против исходного артефакта: наш код зовёт PlayerAnimationLib напрямую, а его
+    // собственные пакеты перенос не трогает — переносится только team/unnamed/mocha внутри. В
+    // рантайм при этом уходит переупакованная версия.
+    modCompileOnly 'com.zigythebird.playeranim:PlayerAnimationLibFabric:1.1.6+mc.1.21.11'
+    modRuntimeOnly mochaShimFiles
+    // include получает те же переупакованные jar, но координатами модуля, а не файлами: Loom пишет
+    // координаты во метаданные вложенного jar и на голом файле падает с «not a module component and
+    // has no capabilities». Локальный ivy-репозиторий над каталогом шимов объявлен в
+    // gradle/relocate-mocha.gradle.
+    mochaShimModules.each { include it }
+    // mochafloats требует javassist (MochaEngineImpl компилирует выражения в байткод). Шимы
+    // подключаются как ФАЙЛЫ, а файл не несёт метаданных, поэтому транзитивные зависимости
+    // артефакта в рантайм не приходят — на compileClasspath javassist есть, на runtimeClasspath его
+    // нет, и клиент падает с NoClassDefFoundError: javassist/NotFoundException при первом создании
+    // движка Molang. Прописывается явно и только на рантайм: релокация javassist не касается, а в
+    // собранный jar он и так попадает вложенным внутри PlayerAnimationLibFabric, поэтому include
+    // здесь не нужен — иначе получится две копии.
+    runtimeOnly 'org.javassist:javassist:3.30.2-GA'
+    implementation 'dev.babbaj:nether-pathfinder:1.6'
+    include 'dev.babbaj:nether-pathfinder:1.6'
+    implementation 'io.netty:netty-handler-proxy:4.2.7.Final'
+    include 'io.netty:netty-handler-proxy:4.2.7.Final'
+    implementation 'io.netty:netty-codec-socks:4.2.7.Final'
+    include 'io.netty:netty-codec-socks:4.2.7.Final'
+
+    implementation sanitizedShadedRuntime
+    bundledModJars.each { jarName ->
+        modImplementation files("libs/${jarName}")
+    }
+}
+
+loom {
+    accessWidenerPath = file('src/main/resources/zenith.accesswidener')
+
+    mixin {
+        useLegacyMixinAp = true
+        defaultRefmapName = 'zenithdlc-refmap.json'
+    }
+
+    runs {
+        client {
+            client()
+            name 'Zenith Client'
+            runDir 'run'
+        }
+    }
+}
+
+processResources {
+    inputs.property 'version', project.version
+    exclude 'Z3nith_By_K3ntSofts-refmap.json'
+    filesMatching('fabric.mod.json') {
+        expand(version: project.version)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+    options.compilerArgs += ['-Xmaxerrs', '250']
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+    withSourcesJar()
+}
+
+jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    from({ zipTree(sanitizeShadedRuntime.get().archiveFile.get().asFile) }) {
+        exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
+    }
+
+    bundledModJars.each { jarName ->
+        from("libs/${jarName}") {
+            into 'META-INF/jars'
+        }
+    }
+}
+
+publishing {
+    publications {
+        create('mavenJava', MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+}

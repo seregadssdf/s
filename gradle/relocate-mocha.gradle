@@ -1,0 +1,160 @@
+// ─── Переупаковка mochafloats и его потребителей ───
+//
+// Проблема. Player Animation Library 1.1.6 тянет com.zigythebird:mochafloats:4.1.5, а
+// ViaFabricPlus 4.4.2 приносит вложенный team_unnamed_mocha:mocha:3.0.1. Это РАЗНЫЕ артефакты, но
+// классы в них лежат по одному пути team/unnamed/mocha/**, поэтому загрузчик берёт один класс на
+// оба мода. Побеждает версия из VFP, а у неё вся арифметика на double: mochafloats — форк
+// специально под float. Отсюда падение на старте:
+//
+//     NoSuchMethodError: 'float team.unnamed.mocha.runtime.standard.MochaMath.d2r(float)'
+//         at PlayerAnimatorLoader.convertPlayerAnimValue
+//         at EmoteManager.loadEmote
+//         at ZenithClient.init
+//
+// Проверено распаковкой обоих jar: в mochafloats 4.1.5 есть d2r(float) и r2d(float), в mocha 3.0.1
+// все методы принимают и возвращают double. То есть подписи несовместимы, и «просто взять любую»
+// нельзя.
+//
+// Почему не исключить mocha из VFP: он ей пользуется для бедрок-моделей, и мод сломается. А задача
+// — чтобы работало всё.
+//
+// Решение. Перенести mochafloats в свой пакет И вместе с ним обе библиотеки анимаций, которые на
+// него ссылаются. Переносить только mochafloats недостаточно: PlayerAnimationLibCore и
+// PlayerAnimationLibFabric ссылаются на team/unnamed/mocha в своём байткоде, и после переноса
+// одной библиотеки они искали бы её по старому пути.
+//
+// Почему вручную, а не Shadow-плагином: Shadow в проекте не подключён, а тянуть его ради одной
+// библиотеки дороже. Имена классов в байткоде лежат UTF8-константами, и подмена пути на строку
+// ТОЙ ЖЕ ДЛИНЫ не меняет размер константы, то есть смещения в файле остаются верными.
+//
+//     team/unnamed/mocha  ->  zenith/shims/mocha     (18 символов в обоих)
+//     team.unnamed.mocha  ->  zenith.shims.mocha     (точечная форма, для Class.forName и логов)
+//
+// Длина проверяется утверждением ниже: если кто-то поправит имя пакета и сломает совпадение, сборка
+// упадёт с понятным сообщением, а не выдаст битый jar.
+
+def MOCHA_FROM_SLASH = 'team/unnamed/mocha'
+def MOCHA_TO_SLASH = 'zenith/shims/mocha'
+def MOCHA_FROM_DOT = 'team.unnamed.mocha'
+def MOCHA_TO_DOT = 'zenith.shims.mocha'
+
+assert MOCHA_FROM_SLASH.length() == MOCHA_TO_SLASH.length() :
+        "путь переноса обязан совпадать по длине с исходным: " +
+        "${MOCHA_FROM_SLASH} (${MOCHA_FROM_SLASH.length()}) против " +
+        "${MOCHA_TO_SLASH} (${MOCHA_TO_SLASH.length()})"
+assert MOCHA_FROM_DOT.length() == MOCHA_TO_DOT.length() : 'точечная форма тоже обязана совпадать'
+
+/**
+ * Переписать один jar: переименовать записи из пакета mocha и подменить ссылки в байткоде.
+ *
+ * Подмена идёт по ISO-8859-1, а не UTF-8: кодировка однобайтовая, поэтому чтение-запись через неё
+ * не портит произвольные байты класса. UTF-8 на невалидных последовательностях подставил бы символ
+ * замены и сломал бы файл.
+ */
+static void rewriteJar(File source, File target, Map<String, String> replacements) {
+    target.parentFile.mkdirs()
+    new java.util.zip.ZipOutputStream(target.newOutputStream()).withCloseable { out ->
+        new java.util.zip.ZipFile(source).withCloseable { zip ->
+            zip.entries().each { entry ->
+                if (entry.directory) {
+                    return
+                }
+                String name = entry.name
+                // Подписи выбрасываются: содержимое меняется, и старая подпись стала бы неверной.
+                if (name.startsWith('META-INF/') &&
+                        (name.endsWith('.SF') || name.endsWith('.RSA') || name.endsWith('.DSA'))) {
+                    return
+                }
+                byte[] bytes = zip.getInputStream(entry).bytes
+                String newName = name
+                replacements.each { fromKey, toKey ->
+                    if (fromKey.contains('/')) {
+                        newName = newName.replace(fromKey, toKey)
+                    }
+                }
+                // Патчатся не только .class: имена встречаются в сервисных файлах META-INF/services
+                // и в json-описаниях модов, и оставленная там старая строка указывала бы в пустоту.
+                if (name.endsWith('.class') || name.startsWith('META-INF/services/')
+                        || name.endsWith('.json')) {
+                    String text = new String(bytes, 'ISO-8859-1')
+                    replacements.each { fromKey, toKey -> text = text.replace(fromKey, toKey) }
+                    bytes = text.getBytes('ISO-8859-1')
+                }
+                out.putNextEntry(new java.util.zip.ZipEntry(newName))
+                out.write(bytes)
+                out.closeEntry()
+            }
+        }
+    }
+}
+
+// Артефакты, которые переносятся вместе: сама библиотека и оба её потребителя.
+def mochaShimCoords = [
+        'com.zigythebird:mochafloats:4.1.5',
+        'com.zigythebird.playeranim:PlayerAnimationLibCore:1.1.6+mc.1.21.11',
+        'com.zigythebird.playeranim:PlayerAnimationLibFabric:1.1.6+mc.1.21.11'
+]
+
+// Артефакты переупаковываются НА ЭТАПЕ КОНФИГУРАЦИИ, а не задачей.
+//
+// Так пришлось сделать из-за Loom: он считает контрольные суммы файлов, попавших в include и
+// modRuntimeOnly, ещё при конфигурации проекта — до того, как выполняется хоть одна задача. Обычная
+// задача с outputs и builtBy тут не спасает, сборка падает раньше:
+//
+//     Failed to setup Minecraft, java.io.UncheckedIOException: Failed to compute checksum
+//     Caused by: NoSuchFileException: build/mocha-shim/mochafloats-4.1.5-shim.jar
+//
+// Повторная работа при этом не делается: если файл уже есть и новее исходного, он не перезаписывается.
+def mochaShimOutDir = file("${buildDir}/mocha-shim")
+
+def mochaShimJars = mochaShimCoords.collect { coords ->
+    def parts = coords.split(':')
+    def source = configurations.detachedConfiguration(dependencies.create(coords))
+            .resolve().find { it.name.endsWith('.jar') }
+    if (source == null) {
+        throw new GradleException("не найден jar для ${coords}")
+    }
+    def target = new File(mochaShimOutDir, "${parts[1]}-${parts[2]}-shim.jar")
+    if (!target.exists() || target.lastModified() < source.lastModified()) {
+        rewriteJar(source, target, [
+                (MOCHA_FROM_SLASH): MOCHA_TO_SLASH,
+                (MOCHA_FROM_DOT)  : MOCHA_TO_DOT
+        ])
+        logger.lifecycle("mocha-shim: ${source.name} -> ${target.name}")
+    }
+    target
+}
+
+ext.mochaShimFiles = files(mochaShimJars)
+
+// Для include одних файлов не хватает. Loom в processIncludeJars требует у вкладываемого артефакта
+// координаты модуля — он пишет их в метаданные вложенного jar, — и на голом файле падает:
+//
+//     Attempted to nest artifact mochafloats-4.1.5-shim.jar
+//     which is not a module component and has no capabilities
+//
+// Поэтому те же переупакованные jar отдаются вторым способом: как модули из локального
+// ivy-репозитория поверх каталога с ними. Имя файла уже имеет вид [module]-[revision]-shim.jar,
+// так что достаточно описать его шаблоном, копировать ничего не нужно.
+//
+// Группа своя, zenith.shims: с исходной резолв мог бы уйти в jitpack за неперенесённой версией.
+// Фильтр по группе не пускает в этот репозиторий резолв всего остального.
+repositories {
+    ivy {
+        url = mochaShimOutDir.toURI()
+        patternLayout {
+            artifact '[module]-[revision]-shim.[ext]'
+        }
+        metadataSources {
+            artifact()
+        }
+        content {
+            includeGroup 'zenith.shims'
+        }
+    }
+}
+
+ext.mochaShimModules = mochaShimCoords.collect { coords ->
+    def parts = coords.split(':')
+    "zenith.shims:${parts[1]}:${parts[2]}"
+}
