@@ -47,6 +47,8 @@ public final class BotAutoSell extends BotModule {
    private long phaseStarted;
    private float targetYaw;
    private boolean started;
+   private boolean shopOpened;
+   private boolean emeraldSelected;
 
    private enum Phase { INSPECT, ROTATE, SELL, CRAFT, BUY_EMERALDS, BUY_WOOD, REFRESH, RECOVER }
 
@@ -56,6 +58,8 @@ public final class BotAutoSell extends BotModule {
       this.phaseStarted = 0L;
       this.nextAction = 0L;
       this.started = false;
+      this.shopOpened = false;
+      this.emeraldSelected = false;
       this.debug("модуль включён; режим=" + this.mode.get() + ", цена=" + Math.round(this.price.getCurrent()));
       super.onEnable();
    }
@@ -75,7 +79,7 @@ public final class BotAutoSell extends BotModule {
          phaseStarted = now;
          this.debug("старт; фаза=" + phase);
       }
-      if (now - phaseStarted > GUI_TIMEOUT && phase != Phase.INSPECT && phase != Phase.ROTATE) {
+      if (now - phaseStarted > GUI_TIMEOUT && phase == Phase.SELL) {
          this.debug("таймаут фазы " + phase + "; восстановление");
          enter(Phase.RECOVER, now);
          phaseStarted = now;
@@ -111,7 +115,7 @@ public final class BotAutoSell extends BotModule {
          enter(Phase.ROTATE, now);
       } else if (findInventory(this::isSword) != null) enter(Phase.SELL, now);
       else if (count(Items.EMERALD) >= 2 && count(Items.STICK) > 0) enter(Phase.CRAFT, now);
-      else if (count(Items.EMERALD) == 0) enter(Phase.BUY_EMERALDS, now);
+      else if (count(Items.EMERALD) < 2) enter(Phase.BUY_EMERALDS, now);
       else enter(Phase.BUY_WOOD, now);
    }
 
@@ -119,10 +123,15 @@ public final class BotAutoSell extends BotModule {
       Slot sword = findInventory(this::isSword);
       if (sword == null) { this.debug("мечи закончились; обновляю AH"); enter(Phase.REFRESH, now); return; }
       if (player.currentScreenHandler != player.playerScreenHandler) { this.debug("продажа: закрываю GUI"); player.closeScreen(); schedule(now); return; }
+      if (!player.currentScreenHandler.getSlot(45).getStack().isEmpty()) {
+         this.debug("ячейка второй руки занята; продажа приостановлена");
+         schedule(now);
+         return;
+      }
       click(sword.id, 40, SlotActionType.SWAP);
       this.debug("найден меч в слоте " + sword.id + "; открываю продажу");
       handler().sendCommand("ah sellgui " + Math.round(price.getCurrent()));
-      enter(Phase.CRAFT, now);
+      enter(Phase.REFRESH, now);
    }
 
    private void craft(BotPlayer player, long now) {
@@ -131,25 +140,48 @@ public final class BotAutoSell extends BotModule {
       int emerald = inventorySlot(Items.EMERALD), stick = inventorySlot(Items.STICK);
       this.debug("крафт: emeraldSlot=" + emerald + ", stickSlot=" + stick);
       if (emerald < 0 || stick < 0) { this.debug("крафт: ресурсов недостаточно"); enter(Phase.INSPECT, now); return; }
-      click(emerald, 0, SlotActionType.QUICK_MOVE);
-      click(stick, 0, SlotActionType.QUICK_MOVE);
+      this.debug("рецепт изумрудного меча не указан; автоматический крафт приостановлен");
       schedule(now);
-      if (count(Items.EMERALD) < 2 || count(Items.STICK) == 0) enter(Phase.INSPECT, now + 1);
    }
 
-   private void buyEmeralds(long now) { this.debug("команда: /shop"); handler().sendCommand("shop"); schedule(now); enter(Phase.INSPECT, now + 1); }
-   private void buyWood(long now) { this.debug("команда: /ah search дерево"); handler().sendCommand("ah search дерево"); schedule(now); enter(Phase.INSPECT, now + 1); }
+   private void buyEmeralds(long now) {
+      if (count(Items.EMERALD) >= 2) { enter(Phase.INSPECT, now); return; }
+      BotPlayer player = bot().getPlayer();
+      if (!shopOpened && player.currentScreenHandler == player.playerScreenHandler) {
+         shopOpened = true;
+         handler().sendCommand("shop");
+         schedule(now);
+         return;
+      }
+      if (!emeraldSelected && player.currentScreenHandler instanceof GenericContainerScreenHandler menu) {
+         for (int i = 0; i < containerSlots(menu); i++) {
+            ItemStack stack = menu.getSlot(i).getStack();
+            if (stack.isOf(Items.EMERALD)) {
+               this.debug("магазин: изумруды в слоте " + i);
+               emeraldSelected = true;
+               click(i, 0, SlotActionType.PICKUP);
+               schedule(now);
+               return;
+            }
+         }
+         this.debug("магазин открыт, изумруды не найдены; жду или проверяю меню");
+      }
+      schedule(now);
+   }
+
+   private void buyWood(long now) {
+      this.debug("покупка дерева и изготовление палок требуют сценария магазина; ожидаю ресурсы");
+      schedule(now);
+   }
 
    private void refresh(BotPlayer player, long now) {
       this.debug("обновление AH; GUI=" + player.currentScreenHandler.getClass().getSimpleName());
-      if (player.currentScreenHandler instanceof GenericContainerScreenHandler menu) {
-         int container = containerSlots(menu);
-         int slot = Math.min(53, container - 1);
-         this.debug("AH: containerSlots=" + container + ", slot=" + slot);
-         if (slot >= 0 && slot < menu.slots.size()) click(slot, 0, SlotActionType.PICKUP);
+      if (player.currentScreenHandler instanceof GenericContainerScreenHandler) {
+         this.debug("окно продажи открыто; ожидаю ручного подтверждения");
          schedule(now);
-      } else { handler().sendCommand("ah"); schedule(now); }
-      enter(Phase.INSPECT, now + 1);
+      } else {
+         enter(Phase.INSPECT, now);
+      }
    }
 
    private void recover(BotPlayer player, long now) { this.debug("восстановление; GUI=" + player.currentScreenHandler.getClass().getSimpleName()); if (player.currentScreenHandler != player.playerScreenHandler) player.closeScreen(); enter(Phase.INSPECT, now); }
@@ -162,7 +194,7 @@ public final class BotAutoSell extends BotModule {
       player.setPitch(MathHelper.clamp(smooth.GuiWalk(), -90.0F, 90.0F));
    }
 
-   private void enter(Phase next, long now) { Phase previous = phase; phase = next; phaseStarted = now; nextAction = now + randomDelay(); this.debug("переход: " + previous + " -> " + next + "; delay=" + (nextAction - now) + "ms"); }
+   private void enter(Phase next, long now) { Phase previous = phase; phase = next; phaseStarted = now; nextAction = now + randomDelay(); if (next == Phase.BUY_EMERALDS) { shopOpened = false; emeraldSelected = false; } this.debug("переход: " + previous + " -> " + next + "; delay=" + (nextAction - now) + "ms"); }
    private void schedule(long now) { nextAction = now + randomDelay(); this.debug("задержка=" + (nextAction - now) + "ms"); }
    private long randomDelay() { return ThreadLocalRandom.current().nextLong(ACTION_MIN, ACTION_MAX + 1); }
    private float random(float min, float max) { return (float)(min + ThreadLocalRandom.current().nextDouble() * (max - min)); }
