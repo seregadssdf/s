@@ -1,30 +1,20 @@
 package org.zenith.base.bot.modules.impl;
 
 import com.darkmagician6.eventapi.EventTarget;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.ItemEnchantmentsComponent;
-import net.minecraft.enchantment.Enchantment;
-import net.minecraft.entity.player.PlayerInventory;
-import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.screen.GenericContainerScreenHandler;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.screen.slot.SlotActionType;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.MathHelper;
 import org.zenith.base.bot.modules.api.BotModule;
 import org.zenith.base.bot.world.BotPlayer;
 import org.zenith.event.BotTickEvent;
 import org.zenith.module.Category;
 import org.zenith.module.ModuleInfo;
-import org.zenith.rotation.Rotation;
 import org.zenith.setting.BooleanSetting;
 import org.zenith.setting.ModeSetting;
 import org.zenith.setting.NumberSetting;
@@ -32,9 +22,10 @@ import org.zenith.setting.NumberSetting;
 /** Buys materials, crafts emerald swords and sells them through the HolyWorld AH. */
 @ModuleInfo(name = "BotAutoSell", category = Category.PLAYER, description = "Автоматически крафтит и продаёт изумрудные мечи")
 public final class BotAutoSell extends BotModule {
-   private static final long ACTION_MIN = 500L;
-   private static final long ACTION_MAX = 1000L;
-   private static final long GUI_TIMEOUT = 8000L;
+   private static final long ACTION_MIN = 800L;
+   private static final long ACTION_MAX = 1500L;
+   private static final long GUI_TIMEOUT = 10000L;
+   private static final long COMMAND_COOLDOWN = 3000L;
    private static final String SWORD_NAME = "изумрудный меч";
 
    public final ModeSetting mode = new ModeSetting("module.autoSell.mode", "module.autoSell.mode.desc", "module.autoSell.emeraldSword");
@@ -45,28 +36,29 @@ public final class BotAutoSell extends BotModule {
    private Phase phase = Phase.INSPECT;
    private long nextAction;
    private long phaseStarted;
-   private float targetYaw;
-   private boolean started;
+   private long lastCommandAt;
    private boolean shopOpened;
-   private boolean emeraldSelected;
+   private boolean emeraldClicked;
+   private boolean categoryClicked;
 
-   private enum Phase { INSPECT, ROTATE, SELL, CRAFT, BUY_EMERALDS, BUY_WOOD, REFRESH, RECOVER }
+   private enum Phase { INSPECT, SELL, SELL_WAIT, BUY_EMERALDS, WAIT_RESOURCES, RECOVER }
 
    @Override
    public void onEnable() {
-      this.phase = Phase.INSPECT;
-      this.phaseStarted = 0L;
-      this.nextAction = 0L;
-      this.started = false;
-      this.shopOpened = false;
-      this.emeraldSelected = false;
-      this.debug("модуль включён; режим=" + this.mode.get() + ", цена=" + Math.round(this.price.getCurrent()));
+      phase = Phase.INSPECT;
+      phaseStarted = 0L;
+      nextAction = 0L;
+      lastCommandAt = 0L;
+      shopOpened = false;
+      emeraldClicked = false;
+      categoryClicked = false;
+      debug("модуль включён; цена=" + Math.round(price.getCurrent()));
       super.onEnable();
    }
 
    @Override
    public void onDisable() {
-      this.phase = Phase.RECOVER;
+      phase = Phase.RECOVER;
       super.onDisable();
    }
 
@@ -75,132 +67,116 @@ public final class BotAutoSell extends BotModule {
       BotPlayer player = event.getPlayer();
       if (player == null || handler() == null || !bot().isJoined()) return;
       long now = System.currentTimeMillis();
-      if (phaseStarted == 0L) {
-         phaseStarted = now;
-         this.debug("старт; фаза=" + phase);
-      }
-      if (now - phaseStarted > GUI_TIMEOUT && phase == Phase.SELL) {
-         this.debug("таймаут фазы " + phase + "; восстановление");
+      if (phaseStarted == 0L) phaseStarted = now;
+      if ((phase == Phase.SELL_WAIT || phase == Phase.BUY_EMERALDS) && now - phaseStarted > GUI_TIMEOUT) {
+         debug("таймаут фазы " + phase + "; восстановление");
          enter(Phase.RECOVER, now);
-         phaseStarted = now;
-      }
-      if (phase == Phase.ROTATE) {
-         rotateToTarget(player);
-         if (Math.abs(MathHelper.wrapDegrees(targetYaw - player.getYaw())) < 1.0F) {
-            this.debug("поворот завершён; yaw=" + player.getYaw() + ", pitch=" + player.getPitch());
-            enter(Phase.INSPECT, now);
-         }
-         return;
       }
       if (now < nextAction) return;
       switch (phase) {
          case INSPECT -> inspect(player, now);
          case SELL -> sell(player, now);
-         case CRAFT -> craft(player, now);
+         case SELL_WAIT -> sellWait(player, now);
          case BUY_EMERALDS -> buyEmeralds(now);
-         case BUY_WOOD -> buyWood(now);
-         case REFRESH -> refresh(player, now);
+         case WAIT_RESOURCES -> schedule(now);
          case RECOVER -> recover(player, now);
-         default -> { }
       }
    }
 
    private void inspect(BotPlayer player, long now) {
-      this.debug("осмотр: мечи=" + countMatching(this::isSword) + ", изумруды=" + count(Items.EMERALD) + ", палки=" + count(Items.STICK)
-         + ", GUI=" + player.currentScreenHandler.getClass().getSimpleName());
-      if (!started) {
-         started = true;
-         targetYaw = player.getYaw() + 180.0F + random(-5.0F, 5.0F);
-         this.debug("проверка инвентаря; поворот на 180 градусов");
-         enter(Phase.ROTATE, now);
-      } else if (findInventory(this::isSword) != null) enter(Phase.SELL, now);
-      else if (count(Items.EMERALD) >= 2 && count(Items.STICK) > 0) enter(Phase.CRAFT, now);
+      debug("осмотр: мечи=" + countMatching(this::isSword) + ", изумруды=" + count(Items.EMERALD) + ", палки=" + count(Items.STICK));
+      if (findInventory(this::isSword) != null) enter(Phase.SELL, now);
       else if (count(Items.EMERALD) < 2) enter(Phase.BUY_EMERALDS, now);
-      else enter(Phase.BUY_WOOD, now);
+      else enter(Phase.WAIT_RESOURCES, now);
    }
 
    private void sell(BotPlayer player, long now) {
       Slot sword = findInventory(this::isSword);
-      if (sword == null) { this.debug("мечи закончились; обновляю AH"); enter(Phase.REFRESH, now); return; }
-      if (player.currentScreenHandler != player.playerScreenHandler) { this.debug("продажа: закрываю GUI"); player.closeScreen(); schedule(now); return; }
-      if (!player.currentScreenHandler.getSlot(45).getStack().isEmpty()) {
-         this.debug("ячейка второй руки занята; продажа приостановлена");
-         schedule(now);
-         return;
-      }
+      if (sword == null) { enter(Phase.INSPECT, now); return; }
+      if (player.currentScreenHandler != player.playerScreenHandler) { player.closeScreen(); schedule(now); return; }
+      if (!player.currentScreenHandler.getSlot(45).getStack().isEmpty()) { schedule(now); return; }
       click(sword.id, 40, SlotActionType.SWAP);
-      this.debug("найден меч в слоте " + sword.id + "; открываю продажу");
+      if (!commandCooldownOk(now)) { schedule(now); return; }
+      lastCommandAt = now;
       handler().sendCommand("ah sellgui " + Math.round(price.getCurrent()));
-      enter(Phase.REFRESH, now);
+      debug("меч в слоте " + sword.id + "; sellgui открыт, жду окно");
+      enter(Phase.SELL_WAIT, now);
    }
 
-   private void craft(BotPlayer player, long now) {
-      if (player.currentScreenHandler != player.playerScreenHandler) { this.debug("крафт: закрываю GUI"); player.closeScreen(); schedule(now); return; }
-      // Vanilla 2x2 recipe: emerald, emerald, stick in the center column.
-      int emerald = inventorySlot(Items.EMERALD), stick = inventorySlot(Items.STICK);
-      this.debug("крафт: emeraldSlot=" + emerald + ", stickSlot=" + stick);
-      if (emerald < 0 || stick < 0) { this.debug("крафт: ресурсов недостаточно"); enter(Phase.INSPECT, now); return; }
-      this.debug("рецепт изумрудного меча не указан; автоматический крафт приостановлен");
-      schedule(now);
-   }
-
-   private void buyEmeralds(long now) {
-      if (count(Items.EMERALD) >= 2) { enter(Phase.INSPECT, now); return; }
-      BotPlayer player = bot().getPlayer();
-      if (!shopOpened && player.currentScreenHandler == player.playerScreenHandler) {
-         shopOpened = true;
-         handler().sendCommand("shop");
-         schedule(now);
-         return;
-      }
-      if (!emeraldSelected && player.currentScreenHandler instanceof GenericContainerScreenHandler menu) {
-         for (int i = 0; i < containerSlots(menu); i++) {
-            ItemStack stack = menu.getSlot(i).getStack();
-            if (stack.isOf(Items.EMERALD)) {
-               this.debug("магазин: изумруды в слоте " + i);
-               emeraldSelected = true;
-               click(i, 0, SlotActionType.PICKUP);
-               schedule(now);
-               return;
-            }
-         }
-         this.debug("магазин открыт, изумруды не найдены; жду или проверяю меню");
-      }
-      schedule(now);
-   }
-
-   private void buyWood(long now) {
-      this.debug("покупка дерева и изготовление палок требуют сценария магазина; ожидаю ресурсы");
-      schedule(now);
-   }
-
-   private void refresh(BotPlayer player, long now) {
-      this.debug("обновление AH; GUI=" + player.currentScreenHandler.getClass().getSimpleName());
+   private void sellWait(BotPlayer player, long now) {
       if (player.currentScreenHandler instanceof GenericContainerScreenHandler) {
-         this.debug("окно продажи открыто; ожидаю ручного подтверждения");
          schedule(now);
       } else {
          enter(Phase.INSPECT, now);
       }
    }
 
-   private void recover(BotPlayer player, long now) { this.debug("восстановление; GUI=" + player.currentScreenHandler.getClass().getSimpleName()); if (player.currentScreenHandler != player.playerScreenHandler) player.closeScreen(); enter(Phase.INSPECT, now); }
-
-   private void rotateToTarget(BotPlayer player) {
-      Rotation current = new Rotation(player.getYaw(), player.getPitch());
-      Rotation target = new Rotation(targetYaw, player.getPitch() + random(-2.0F, 2.0F));
-      Rotation smooth = current.on23(current.EmoteManager(target));
-      player.setYaw(player.getYaw() + MathHelper.wrapDegrees(smooth.GrimGlide() - player.getYaw()));
-      player.setPitch(MathHelper.clamp(smooth.GuiWalk(), -90.0F, 90.0F));
+   private void buyEmeralds(long now) {
+      if (count(Items.EMERALD) >= 2) { enter(Phase.INSPECT, now); return; }
+      BotPlayer player = bot().getPlayer();
+      if (player.currentScreenHandler == player.playerScreenHandler) {
+         if (!shopOpened && commandCooldownOk(now)) {
+            shopOpened = true;
+            lastCommandAt = now;
+            handler().sendCommand("shop");
+            debug("команда shop отправлена, жду окно");
+            schedule(now, 2000L);
+         } else {
+            schedule(now);
+         }
+         return;
+      }
+      if (!(player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
+      if (!emeraldClicked) {
+         for (int i = 0; i < containerSlots(menu); i++) {
+            if (menu.getSlot(i).getStack().isOf(Items.EMERALD)) {
+               emeraldClicked = true;
+               click(i, 0, SlotActionType.PICKUP);
+               debug("клик по изумруду в слоте " + i + ", жду предмет");
+               schedule(now, 2000L);
+               return;
+            }
+         }
+      } else if (count(Items.EMERALD) >= 2) {
+         debug("изумруды куплены");
+         enter(Phase.INSPECT, now);
+         return;
+      }
+      if (!categoryClicked) {
+         for (int i = 0; i < containerSlots(menu); i++) {
+            if (menu.getSlot(i).getStack().isOf(Items.GOLD_INGOT)) {
+               categoryClicked = true;
+               click(i, 0, SlotActionType.PICKUP);
+               debug("клик по категории в слоте " + i + ", жду обновление меню");
+               schedule(now, 2500L);
+               return;
+            }
+         }
+      }
+      schedule(now);
    }
 
-   private void enter(Phase next, long now) { Phase previous = phase; phase = next; phaseStarted = now; nextAction = now + randomDelay(); if (next == Phase.BUY_EMERALDS) { shopOpened = false; emeraldSelected = false; } this.debug("переход: " + previous + " -> " + next + "; delay=" + (nextAction - now) + "ms"); }
-   private void schedule(long now) { nextAction = now + randomDelay(); this.debug("задержка=" + (nextAction - now) + "ms"); }
+   private void recover(BotPlayer player, long now) {
+      if (player.currentScreenHandler != player.playerScreenHandler) player.closeScreen();
+      enter(Phase.INSPECT, now);
+   }
+
+   private void enter(Phase next, long now) {
+      Phase previous = phase;
+      phase = next;
+      phaseStarted = now;
+      nextAction = now + randomDelay();
+      if (next == Phase.BUY_EMERALDS) { shopOpened = false; emeraldClicked = false; categoryClicked = false; }
+      debug("переход: " + previous + " -> " + next);
+   }
+
+   private boolean commandCooldownOk(long now) { return now - lastCommandAt >= COMMAND_COOLDOWN; }
+   private void schedule(long now) { nextAction = now + randomDelay(); }
+   private void schedule(long now, long extra) { nextAction = now + extra + randomDelay(); }
    private long randomDelay() { return ThreadLocalRandom.current().nextLong(ACTION_MIN, ACTION_MAX + 1); }
-   private float random(float min, float max) { return (float)(min + ThreadLocalRandom.current().nextDouble() * (max - min)); }
 
    private void click(int slot, int button, SlotActionType action) {
-      this.debug("клик: слот=" + slot + ", кнопка=" + button + ", действие=" + action);
+      debug("клик: слот=" + slot + ", кнопка=" + button + ", действие=" + action);
       if (interaction() != null) interaction().clickSlot(bot().getPlayer().currentScreenHandler.syncId, slot, button, action, bot().getPlayer());
    }
 
@@ -209,18 +185,37 @@ public final class BotAutoSell extends BotModule {
          this.bot().systemMessage("AutoSell: " + message);
       }
    }
+
    private int containerSlots(GenericContainerScreenHandler menu) { return Math.min(menu.getInventory().size(), Math.max(0, menu.slots.size() - 36)); }
-   private int inventorySlot(Item item) { Slot slot = findInventory(stack -> !stack.isEmpty() && stack.isOf(item)); return slot == null ? -1 : slot.id; }
-   private int countMatching(java.util.function.Predicate<ItemStack> test) { int total = 0; for (int i = 0; i < bot().getPlayer().getInventory().size(); i++) { ItemStack stack = bot().getPlayer().getInventory().getStack(i); if (test.test(stack)) total += stack.getCount(); } return total; }
-   private Slot findInventory(java.util.function.Predicate<ItemStack> test) { for (Slot slot : bot().getPlayer().currentScreenHandler.slots) if (slot.inventory == bot().getPlayer().getInventory() && test.test(slot.getStack())) return slot; return null; }
-   private int count(Item item) { int total = 0; for (int i = 0; i < bot().getPlayer().getInventory().size(); i++) { ItemStack stack = bot().getPlayer().getInventory().getStack(i); if (stack.isOf(item)) total += stack.getCount(); } return total; }
+   private int count(net.minecraft.item.Item item) {
+      int total = 0;
+      for (int i = 0; i < bot().getPlayer().getInventory().size(); i++) {
+         ItemStack stack = bot().getPlayer().getInventory().getStack(i);
+         if (stack.isOf(item)) total += stack.getCount();
+      }
+      return total;
+   }
+   private int countMatching(java.util.function.Predicate<ItemStack> test) {
+      int total = 0;
+      for (int i = 0; i < bot().getPlayer().getInventory().size(); i++) {
+         ItemStack stack = bot().getPlayer().getInventory().getStack(i);
+         if (test.test(stack)) total += stack.getCount();
+      }
+      return total;
+   }
+   private Slot findInventory(java.util.function.Predicate<ItemStack> test) {
+      for (Slot slot : bot().getPlayer().currentScreenHandler.slots)
+         if (slot.inventory == bot().getPlayer().getInventory() && test.test(slot.getStack())) return slot;
+      return null;
+   }
    private boolean isSword(ItemStack stack) {
       if (stack.isEmpty() || !stack.isOf(Items.DIAMOND_SWORD)) return false;
       String name = stack.getName().getString().toLowerCase(Locale.ROOT);
       if (!name.contains(SWORD_NAME)) return false;
-      ItemEnchantmentsComponent ench = stack.get(DataComponentTypes.ENCHANTMENTS);
+      var ench = stack.get(DataComponentTypes.ENCHANTMENTS);
       if (ench == null) return false;
-      for (var entry : ench.getEnchantmentEntries()) if (entry.getKey().getKey().toString().toLowerCase(Locale.ROOT).contains("sharpness") && entry.getIntValue() >= 3) return true;
+      for (var entry : ench.getEnchantmentEntries())
+         if (entry.getKey().getKey().toString().toLowerCase(Locale.ROOT).contains("sharpness") && entry.getIntValue() >= 3) return true;
       return false;
    }
 }
