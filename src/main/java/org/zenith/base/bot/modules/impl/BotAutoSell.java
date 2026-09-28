@@ -176,7 +176,7 @@ public final class BotAutoSell extends BotModule {
       enter(Phase.INSPECT, now);
    }
 
-   // /ah search дерево -> список по цене -> купить 2-й или 3-й (не 1-й) -> Shift+ЛКМ -> слот 1 в меню лота.
+   // /ah search дерево -> все лоты кроме последней серверной строки -> 2-й/3-й по цене.
    private void buyLogs(long now) {
       BotPlayer player = bot().getPlayer();
       if (player.currentScreenHandler == player.playerScreenHandler) {
@@ -188,9 +188,9 @@ public final class BotAutoSell extends BotModule {
          return;
       }
       if (!(player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
-      List<Integer> sorted = sortLogsByPrice(menu);
+      List<Integer> sorted = sortAuctionLotsByPrice(menu);
       if (sorted.size() < 2) {
-         debug("лотов дерева мало (" + sorted.size() + "); жду обновление");
+         debug("подходящих лотов (>=32 предмета с ценой в lore) мало: " + sorted.size());
          schedule(now);
          return;
       }
@@ -496,11 +496,17 @@ public final class BotAutoSell extends BotModule {
       return (2L + ThreadLocalRandom.current().nextLong(9L)) * 1000L;
    }
 
-   private List<Integer> sortLogsByPrice(GenericContainerScreenHandler menu) {
+   /**
+    * HolyWorld reserves the last nine slots in an auction page for navigation.
+    * All earlier non-empty stacks are lots; item display names are deliberately
+    * ignored because search results can be renamed/custom items.
+    */
+   private List<Integer> sortAuctionLotsByPrice(GenericContainerScreenHandler menu) {
       List<int[]> priced = new ArrayList<>();
-      for (int i = 0; i < containerSlots(menu); i++) {
+      int lotSlots = Math.max(0, containerSlots(menu) - 9);
+      for (int i = 0; i < lotSlots; i++) {
          ItemStack stack = menu.getSlot(i).getStack();
-         if (isLog(stack)) {
+         if (!stack.isEmpty() && stack.getCount() >= 32) {
             long p = lorePrice(stack);
             if (p > 0L) priced.add(new int[]{i, (int) Math.min(p, Integer.MAX_VALUE)});
          }

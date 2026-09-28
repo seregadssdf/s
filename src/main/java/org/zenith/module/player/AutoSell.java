@@ -135,8 +135,8 @@ public final class AutoSell extends Module {
          return;
       }
       if (!(client.player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
-      List<Integer> logs = sortLogsByPrice(menu);
-      if (logs.size() < 2) { message("в /ah найдено меньше двух лотов дерева, жду"); schedule(now); return; }
+      List<Integer> logs = sortAuctionLotsByPrice(menu);
+      if (logs.size() < 2) { message("подходящих лотов >=32 с ценой в lore меньше двух, жду"); schedule(now); return; }
       int slot = logs.get(ThreadLocalRandom.current().nextBoolean() ? 1 : Math.min(2, logs.size() - 1));
       click(client, slot, 0, SlotActionType.QUICK_MOVE);
       message("Shift+ЛКМ по " + (slot + 1) + "-му слоту списка дерева");
@@ -316,10 +316,14 @@ public final class AutoSell extends Module {
       return nearest;
    }
 
-   private List<Integer> sortLogsByPrice(GenericContainerScreenHandler menu) {
+   private List<Integer> sortAuctionLotsByPrice(GenericContainerScreenHandler menu) {
       List<int[]> prices = new ArrayList<>();
-      for (int i = 0; i < containerSlots(menu); i++) if (isLog(menu.getSlot(i).getStack())) {
-         long price = lorePrice(menu.getSlot(i).getStack());
+      // Последняя строка из 9 слотов — серверные кнопки /ah, это не лоты.
+      int lotSlots = Math.max(0, containerSlots(menu) - 9);
+      for (int i = 0; i < lotSlots; i++) {
+         ItemStack stack = menu.getSlot(i).getStack();
+         if (stack.isEmpty() || stack.getCount() < 32) continue;
+         long price = lorePrice(stack);
          if (price > 0) prices.add(new int[]{i, (int)Math.min(price, Integer.MAX_VALUE)});
       }
       prices.sort(Comparator.comparingInt(value -> value[1]));
