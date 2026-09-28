@@ -41,7 +41,7 @@ public final class AutoSell extends Module {
    private static final long COMMAND_COOLDOWN = 3000L;
    private static final long MAX_LOG_STACK_PRICE = 250_000L;
    // Read the original lore lines, as the other auction modules do.
-   private static final Pattern PRICE_PATTERN = Pattern.compile("Цена\\s*:\\s*[$＄]?\\s*([0-9][0-9\\s,._]*)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+   private static final Pattern PRICE_PATTERN = Pattern.compile("Цена\\s*[:：][^0-9]{0,16}([0-9][0-9\\s,._]*)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
    public final NumberSetting price = new NumberSetting("module.autoSell.price", 19000.0F, 0.0F, 100000.0F, 1.0F, "module.autoSell.price.desc", "$", null, null);
 
    private Phase phase;
