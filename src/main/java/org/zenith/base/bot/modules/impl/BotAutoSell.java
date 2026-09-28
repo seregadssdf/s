@@ -13,13 +13,20 @@ import java.util.regex.Pattern;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.ItemEnchantmentsComponent;
 import net.minecraft.component.type.LoreComponent;
+import net.minecraft.block.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.screen.CraftingScreenHandler;
 import net.minecraft.screen.GenericContainerScreenHandler;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.Text;
+import net.minecraft.util.Hand;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec3d;
 import org.zenith.base.bot.modules.api.BotModule;
 import org.zenith.base.bot.world.BotPlayer;
 import org.zenith.event.BotTickEvent;
@@ -49,7 +56,7 @@ public final class BotAutoSell extends BotModule {
    public final NumberSetting price = new NumberSetting("module.autoSell.price", 19000.0F, 0.0F, 100000.0F, 1.0F, "module.autoSell.price.desc", "$", null, null);
    public final NumberSetting rotateSeconds = new NumberSetting("module.autoSell.rotateSeconds", 5.0F, 2.0F, 10.0F, 1.0F, "module.autoSell.rotateSeconds.desc", "s");
    public final BooleanSetting rotation = new BooleanSetting("module.autoSell.rotation", "module.autoSell.rotation.desc", true);
-   public final BooleanSetting debug = new BooleanSetting("module.autoSell.debug", "module.autoSell.debug.desc", false);
+   public final BooleanSetting debug = new BooleanSetting("module.autoSell.debug", "module.autoSell.debug.desc", true);
 
    private Phase phase = Phase.INSPECT;
    private long nextAction;
@@ -61,11 +68,18 @@ public final class BotAutoSell extends BotModule {
    private boolean shopCategoryOpened;
    private int craftStep;
    private int craftSourceSlot;
+   private int swordCraftStep;
+   private int swordCraftSourceSlot;
+   private BlockPos craftingTable;
+   private boolean craftingTableTurnStarted;
+   private boolean craftingTableOpenRequested;
+   private String lastDebugMessage;
+   private long lastDebugAt;
 
    private final BotRotationPlayback playback = new BotRotationPlayback();
 
    private enum Phase {
-      INSPECT, ROTATE_SPAWN, BUY_LOGS, BUY_LOGS_CONFIRM, CRAFT_STICKS, BUY_EMERALDS, CRAFT_SWORDS, SELL, SELL_CONFIRM, REFRESH, RECOVER
+      INSPECT, ROTATE_SPAWN, BUY_LOGS, BUY_LOGS_CONFIRM, CRAFT_STICKS, BUY_EMERALDS, CRAFT_TABLE, CRAFT_SWORDS, SELL, SELL_CONFIRM, REFRESH, RECOVER
    }
 
    @Override
@@ -80,6 +94,13 @@ public final class BotAutoSell extends BotModule {
       shopCategoryOpened = false;
       craftStep = 0;
       craftSourceSlot = -1;
+      swordCraftStep = 0;
+      swordCraftSourceSlot = -1;
+      craftingTable = null;
+      craftingTableTurnStarted = false;
+      craftingTableOpenRequested = false;
+      lastDebugMessage = null;
+      lastDebugAt = 0L;
       playback.stop();
       debug("модуль включён; режим=изумрудный меч, цена=" + Math.round(price.getCurrent()));
       super.onEnable();
@@ -119,6 +140,7 @@ public final class BotAutoSell extends BotModule {
          case BUY_LOGS_CONFIRM -> buyLogsConfirm(now);
          case CRAFT_STICKS -> craftSticks(player, now);
          case BUY_EMERALDS -> buyEmeralds(now);
+         case CRAFT_TABLE -> openCraftingTable(player, now);
          case CRAFT_SWORDS -> craftSwords(player, now);
          case SELL -> sell(player, now);
          case SELL_CONFIRM -> sellConfirm(now);
@@ -143,7 +165,7 @@ public final class BotAutoSell extends BotModule {
       else if (count(Items.STICK) == 0 && (countLogs() > 0 || countPlanks() > 0)) enter(Phase.CRAFT_STICKS, now);
       else if (count(Items.STICK) == 0 && countLogs() == 0 && freeSlots() > 0) enter(Phase.BUY_LOGS, now);
       else if (count(Items.EMERALD) < 2 && freeSlots() > 0) enter(Phase.BUY_EMERALDS, now);
-      else if (count(Items.EMERALD) >= 2 && count(Items.STICK) > 0) enter(Phase.CRAFT_SWORDS, now);
+      else if (count(Items.EMERALD) >= 2 && count(Items.STICK) > 0) enter(Phase.CRAFT_TABLE, now);
       else schedule(now);
    }
 
@@ -262,7 +284,7 @@ public final class BotAutoSell extends BotModule {
 
    // /shop -> клик по золотому слитку (категория) -> Shift+ПКМ по изумруду (стак).
    private void buyEmeralds(long now) {
-      if (count(Items.EMERALD) >= 2) { enter(Phase.CRAFT_SWORDS, now); return; }
+      if (count(Items.EMERALD) >= 2 && count(Items.STICK) > 0) { enter(Phase.CRAFT_TABLE, now); return; }
       BotPlayer player = bot().getPlayer();
       if (player.currentScreenHandler == player.playerScreenHandler) {
          if (!commandCooldownOk(now)) { schedule(now); return; }
@@ -300,13 +322,94 @@ public final class BotAutoSell extends BotModule {
       schedule(now);
    }
 
+   // Находит верстак среди загруженных блоков рядом с ботом, плавно поворачивается и открывает его.
+   private void openCraftingTable(BotPlayer player, long now) {
+      if (player.currentScreenHandler instanceof CraftingScreenHandler) {
+         enter(Phase.CRAFT_SWORDS, now);
+         return;
+      }
+      if (player.currentScreenHandler != player.playerScreenHandler) {
+         debug("верстак: закрываю постороннее окно");
+         player.closeScreen();
+         schedule(now);
+         return;
+      }
+      if (craftingTable == null || !world().getBlockState(craftingTable).isOf(Blocks.CRAFTING_TABLE)) {
+         craftingTable = findNearbyCraftingTable(player);
+         craftingTableTurnStarted = false;
+         craftingTableOpenRequested = false;
+         if (craftingTable == null) {
+            debug("верстак: рядом нет загруженного верстака (нужен в радиусе взаимодействия)");
+            schedule(now, 2000L);
+            return;
+         }
+         debug("верстак найден: " + craftingTable.toShortString());
+      }
+      if (!craftingTableTurnStarted) {
+         rotateTo(player, craftingTable.toCenterPos(), 800L);
+         craftingTableTurnStarted = true;
+         debug("верстак: плавно поворачиваюсь к " + craftingTable.toShortString());
+         return;
+      }
+      if (!craftingTableOpenRequested) {
+         BlockHitResult hit = new BlockHitResult(craftingTable.toCenterPos(), Direction.UP, craftingTable, false);
+         interaction().interactBlock(player, Hand.MAIN_HAND, hit);
+         craftingTableOpenRequested = true;
+         debug("верстак: нажимаю ПКМ, жду окно крафта 3x3");
+         schedule(now, 1500L);
+         return;
+      }
+      debug("верстак: окно 3x3 ещё не открылось, пробую снова");
+      craftingTableOpenRequested = false;
+      schedule(now);
+   }
+
    // Кастомный крафт: как алмазный меч, но изумруды — 2 сверху + палка снизу в центральной колонке.
    private void craftSwords(BotPlayer player, long now) {
-      if (player.currentScreenHandler != player.playerScreenHandler) { player.closeScreen(); schedule(now); return; }
+      if (!(player.currentScreenHandler instanceof CraftingScreenHandler)) {
+         debug("крафт меча: окна верстака нет, возвращаюсь к поиску верстака");
+         enter(Phase.CRAFT_TABLE, now);
+         return;
+      }
       if (count(Items.EMERALD) < 2 || count(Items.STICK) == 0) { enter(Phase.INSPECT, now); return; }
-      debug("крафт мечей: 2 изумруда + палка");
+      switch (swordCraftStep) {
+         case 0 -> {
+            Slot emerald = findInventory(stack -> stack.isOf(Items.EMERALD));
+            if (emerald == null) { enter(Phase.INSPECT, now); return; }
+            swordCraftSourceSlot = emerald.id;
+            click(swordCraftSourceSlot, 0, SlotActionType.PICKUP);
+            debug("крафт меча: взял изумруды из слота " + swordCraftSourceSlot);
+            swordCraftStep = 1;
+         }
+         case 1 -> { click(2, 1, SlotActionType.PICKUP); debug("крафт меча: 1-й изумруд в верхний центральный слот"); swordCraftStep = 2; }
+         case 2 -> { click(5, 1, SlotActionType.PICKUP); debug("крафт меча: 2-й изумруд в центральный слот"); swordCraftStep = 3; }
+         case 3 -> { click(swordCraftSourceSlot, 0, SlotActionType.PICKUP); swordCraftStep = 4; }
+         case 4 -> {
+            Slot stick = findInventory(stack -> stack.isOf(Items.STICK));
+            if (stick == null) { enter(Phase.INSPECT, now); return; }
+            swordCraftSourceSlot = stick.id;
+            click(swordCraftSourceSlot, 0, SlotActionType.PICKUP);
+            debug("крафт меча: взял палку из слота " + swordCraftSourceSlot);
+            swordCraftStep = 5;
+         }
+         case 5 -> { click(8, 1, SlotActionType.PICKUP); debug("крафт меча: палка в нижний центральный слот"); swordCraftStep = 6; }
+         case 6 -> { click(swordCraftSourceSlot, 0, SlotActionType.PICKUP); swordCraftStep = 7; }
+         case 7 -> { click(0, 0, SlotActionType.QUICK_MOVE); debug("крафт меча: забираю результат"); swordCraftStep = 8; }
+         default -> {
+            if (findInventory(this::isSword) != null) {
+               debug("крафт меча: изумрудный меч готов, закрываю верстак");
+               swordCraftStep = 0;
+               player.closeScreen();
+               enter(Phase.SELL, now);
+               return;
+            }
+            debug("крафт меча: сервер не выдал результат, очищаю сетку и начинаю заново");
+            swordCraftStep = 0;
+            enter(Phase.INSPECT, now);
+            return;
+         }
+      }
       schedule(now);
-      if (findInventory(this::isSword) != null) enter(Phase.SELL, now);
    }
 
    // Меч в руку -> /ah sellgui <цена> -> положить 1 меч.
@@ -463,6 +566,33 @@ public final class BotAutoSell extends BotModule {
          || stack.isOf(Items.CRIMSON_PLANKS) || stack.isOf(Items.WARPED_PLANKS));
    }
 
+   private BlockPos findNearbyCraftingTable(BotPlayer player) {
+      BlockPos origin = player.getBlockPos();
+      BlockPos nearest = null;
+      double nearestDistance = Double.MAX_VALUE;
+      double range = player.getBlockInteractionRange();
+      double rangeSquared = range * range;
+      for (BlockPos pos : BlockPos.iterate(origin.add(-6, -3, -6), origin.add(6, 3, 6))) {
+         if (!world().isChunkLoaded(pos) || !world().getBlockState(pos).isOf(Blocks.CRAFTING_TABLE)) continue;
+         double distance = player.getCameraPosVec(1.0F).squaredDistanceTo(pos.toCenterPos());
+         if (distance <= rangeSquared && distance < nearestDistance) {
+            nearest = pos.toImmutable();
+            nearestDistance = distance;
+         }
+      }
+      return nearest;
+   }
+
+   private void rotateTo(BotPlayer player, Vec3d target, long durationMs) {
+      Vec3d eye = player.getCameraPosVec(1.0F);
+      double x = target.x - eye.x;
+      double y = target.y - eye.y;
+      double z = target.z - eye.z;
+      float yaw = (float)(Math.toDegrees(Math.atan2(z, x)) - 90.0);
+      float pitch = (float)-Math.toDegrees(Math.atan2(y, Math.sqrt(x * x + z * z)));
+      playback.start(player, MathHelper.wrapDegrees(yaw - player.getYaw()), MathHelper.clamp(pitch - player.getPitch(), -30.0F, 30.0F), durationMs);
+   }
+
    private void selectSlot(BotPlayer player, Slot sword) {
       int invIndex = sword.getIndex();
       if (invIndex >= 0 && invIndex < 9) player.getInventory().selectedSlot = invIndex;
@@ -471,6 +601,12 @@ public final class BotAutoSell extends BotModule {
    private void enter(Phase next, long now) {
       Phase previous = phase;
       if (next == Phase.BUY_EMERALDS && previous != Phase.BUY_EMERALDS) shopCategoryOpened = false;
+      if (next == Phase.CRAFT_TABLE && previous != Phase.CRAFT_TABLE) {
+         craftingTable = null;
+         craftingTableTurnStarted = false;
+         craftingTableOpenRequested = false;
+         swordCraftStep = 0;
+      }
       phase = next;
       phaseStarted = now;
       nextAction = now + randomDelay();
@@ -489,9 +625,12 @@ public final class BotAutoSell extends BotModule {
    }
 
    private void debug(String message) {
-      if (this.debug != null && this.debug.isEnabled() && this.bot() != null) {
-         this.bot().systemMessage("AutoSell: " + message);
-      }
+      if (this.bot() == null) return;
+      long now = System.currentTimeMillis();
+      if (message.equals(lastDebugMessage) && now - lastDebugAt < 2000L) return;
+      lastDebugMessage = message;
+      lastDebugAt = now;
+      this.bot().systemMessage("AutoSell [" + phase + "]: " + message);
    }
 
    private int containerSlots(GenericContainerScreenHandler menu) { return Math.min(menu.getInventory().size(), Math.max(0, menu.slots.size() - 36)); }
