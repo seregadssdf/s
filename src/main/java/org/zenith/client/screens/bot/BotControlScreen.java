@@ -780,47 +780,7 @@ public class BotControlScreen extends CustomScreen {
       var1.getMatrices().pushMatrix();
       var1.getMatrices().translate(this.containerOffsetX, this.containerOffsetY);
       var1.getMatrices().scale(scale, scale);
-      if (botcontrolscreen_containerlayout.texture() == null) {
-         this.drawSyntheticPanel(var1, i, j, botcontrolscreen_containerlayout.width(), botcontrolscreen_containerlayout.height());
-      } else if (botcontrolscreen_containerlayout.chestRows() > 0) {
-         var1.drawTexture(
-            RenderPipelines.GUI_TEXTURED,
-            botcontrolscreen_containerlayout.texture(),
-            i,
-            j,
-            0.0F,
-            0.0F,
-            botcontrolscreen_containerlayout.width(),
-            botcontrolscreen_containerlayout.chestRows() * 18 + 17,
-            256,
-            256
-         );
-         var1.drawTexture(
-            RenderPipelines.GUI_TEXTURED,
-            botcontrolscreen_containerlayout.texture(),
-            i,
-            j + botcontrolscreen_containerlayout.chestRows() * 18 + 17,
-            0.0F,
-            126.0F,
-            botcontrolscreen_containerlayout.width(),
-            96,
-            256,
-            256
-         );
-      } else {
-         var1.drawTexture(
-            RenderPipelines.GUI_TEXTURED,
-            botcontrolscreen_containerlayout.texture(),
-            i,
-            j,
-            0.0F,
-            0.0F,
-            botcontrolscreen_containerlayout.width(),
-            botcontrolscreen_containerlayout.height(),
-            256,
-            256
-         );
-      }
+      this.drawContainerBackground(var1, var2, var3, botcontrolscreen_containerlayout, i, j);
 
       // Explicit frames keep crafting and server-menu slots legible even when texture UVs differ.
       for (Slot slot : var3.slots) {
@@ -899,12 +859,52 @@ public class BotControlScreen extends CustomScreen {
    }
 
    public void drawSyntheticPanel(HudDrawContext var1, int var2, int var3, int var4, int var5) {
-      var1.fill(var2 - 1, var3 - 1, var2 + var4 + 1, var3 + var5 + 1, -16777216);
-      var1.fill(var2, var3, var2 + var4, var3 + var5, -3750202);
-      var1.fill(var2, var3, var2 + var4 - 1, var3 + 1, -1);
-      var1.fill(var2, var3 + 1, var2 + 1, var3 + var5 - 1, -1);
-      var1.fill(var2 + 1, var3 + var5 - 1, var2 + var4, var3 + var5, -11184811);
-      var1.fill(var2 + var4 - 1, var3 + 1, var2 + var4, var3 + var5 - 1, -11184811);
+      var1.fill(var2 - 2, var3 - 2, var2 + var4 + 2, var3 + var5 + 2, 0xFF101014);
+      var1.fill(var2 - 1, var3 - 1, var2 + var4 + 1, var3 + var5 + 1, 0xFFE5E5E5);
+      var1.fill(var2, var3, var2 + var4, var3 + var5, 0xFF3B3B3B);
+      var1.fill(var2, var3, var2 + var4, var3 + 1, 0xFFFFFFFF);
+      var1.fill(var2, var3, var2 + 1, var3 + var5, 0xFFFFFFFF);
+      var1.fill(var2, var3 + var5 - 1, var2 + var4, var3 + var5, 0xFF171717);
+      var1.fill(var2 + var4 - 1, var3, var2 + var4, var3 + var5, 0xFF171717);
+   }
+
+   /** Container backplates are drawn with solid fills so missing or replaced GUI textures cannot hide menus. */
+   private void drawContainerBackground(HudDrawContext context, BotPlayer player, ScreenHandler handler,
+         BotControlScreen_ContainerLayout layout, int left, int top) {
+      int width = layout.width();
+      int height = layout.height();
+      drawSyntheticPanel(context, left, top, width, height);
+      context.fill(left + 2, top + 2, left + width - 2, top + 22, 0xFF686868);
+      context.fill(left + 3, top + 3, left + width - 3, top + 21, 0xFF515151);
+
+      if (handler instanceof GenericContainerScreenHandler container) {
+         int rowsBottom = top + 17 + container.getRows() * 18;
+         context.fill(left + 3, top + 23, left + width - 3, rowsBottom, 0xFF656565);
+         context.fill(left + 3, rowsBottom, left + width - 3, rowsBottom + 2, 0xFF242424);
+         context.fill(left + 3, rowsBottom + 2, left + width - 3, top + height - 3, 0xFF626262);
+      } else if (handler instanceof CraftingScreenHandler) {
+         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, maxX = 0, maxY = 0;
+         for (Slot slot : handler.slots) {
+            if (slot.inventory == player.getInventory()) continue;
+            minX = Math.min(minX, slot.x);
+            minY = Math.min(minY, slot.y);
+            maxX = Math.max(maxX, slot.x + 16);
+            maxY = Math.max(maxY, slot.y + 16);
+         }
+         if (minX != Integer.MAX_VALUE) {
+            context.fill(left + minX - 7, top + minY - 7, left + maxX + 7, top + maxY + 7, 0xFF242424);
+            context.fill(left + minX - 6, top + minY - 6, left + maxX + 6, top + maxY + 6, 0xFF777777);
+            context.fill(left + minX - 4, top + minY - 4, left + maxX + 4, top + maxY + 4, 0xFF4A4A4A);
+         }
+         int inventoryTop = Integer.MAX_VALUE;
+         for (Slot slot : handler.slots) if (slot.inventory == player.getInventory()) inventoryTop = Math.min(inventoryTop, slot.y);
+         if (inventoryTop != Integer.MAX_VALUE) {
+            context.fill(left + 3, top + inventoryTop - 9, left + width - 3, top + inventoryTop - 7, 0xFF242424);
+            context.fill(left + 3, top + inventoryTop - 7, left + width - 3, top + height - 3, 0xFF626262);
+         }
+      } else {
+         context.fill(left + 3, top + 23, left + width - 3, top + height - 3, 0xFF626262);
+      }
    }
 
    public void drawSlotFrame(HudDrawContext var1, int var2, int var3) {
