@@ -96,6 +96,8 @@ public class BotControlScreen extends CustomScreen {
    public BotWorldView view;
    public boolean inventoryOpen;
    public boolean cursorLocked;
+   public boolean loggedRenderError;
+   public String lastRenderError;
    public double lastMouseX = Double.NaN;
    public double lastMouseY = Double.NaN;
    public Slot hoveredSlotCache;
@@ -216,6 +218,7 @@ public class BotControlScreen extends CustomScreen {
             minecraftClient3.textRenderer, s2, (this.width - minecraftClient3.textRenderer.getWidth(s2)) / 2, this.height / 2 + 8, -6643542, true
          );
       } else {
+         try {
          int i = minecraftClient3.getWindow().getFramebufferWidth();
          int j = minecraftClient3.getWindow().getFramebufferHeight();
          boolean flag4 = this.view != null && this.view.renderToFbo(i, j);
@@ -235,7 +238,9 @@ public class BotControlScreen extends CustomScreen {
                0.0F
             );
          } else {
-            String s = "Загрузка мира бота...";
+            String s = this.view != null && this.view.lastError != null
+               ? "Загрузка мира бота... (" + this.view.lastError + ")"
+               : "Загрузка мира бота...";
             var1.drawText(
                minecraftClient3.textRenderer, s, (this.width - minecraftClient3.textRenderer.getWidth(s)) / 2, this.height / 2 - 4, -1, true
             );
@@ -253,7 +258,28 @@ public class BotControlScreen extends CustomScreen {
             this.hoveredSlotCache = null;
             this.renderCrosshair(var1);
          }
+         } catch (Throwable throwable) {
+            this.lastRenderError = throwable.toString();
+            if (!this.loggedRenderError) {
+               this.loggedRenderError = true;
+               System.err.println("[BotControlScreen] render failed:");
+               throwable.printStackTrace();
+            }
+         }
+         this.renderStateLine(var1, botclient, botplayer, screenhandler);
       }
+   }
+
+   /** Панель состояния: окно бота и ошибка рендера видны, даже если картинка не собралась. */
+   private void renderStateLine(HudDrawContext var1, BotClient var2, BotPlayer var3, ScreenHandler var4) {
+      if (this.lastRenderError != null) {
+         var1.drawText(minecraftClient3.textRenderer, "ошибка рендера: " + this.lastRenderError, 4, 12, -65536, true);
+      }
+      if (var2 == null || var3 == null || var4 == null) return;
+      BotPlayHandler playhandler = var2.getPlayHandler();
+      String s = "GUI бота: " + var4.getClass().getSimpleName() + ", syncId=" + var4.syncId
+         + (playhandler != null && playhandler.hasOpenScreen() ? ", открыт: " + playhandler.getCurrentScreenTitle().getString() : ", окна нет");
+      var1.drawText(minecraftClient3.textRenderer, s, 4, 22, -256, true);
    }
 
    public ScreenHandler currentUiHandler(BotClient var1, BotPlayer var2) {
