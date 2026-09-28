@@ -194,9 +194,9 @@ public final class BotConnection extends SimpleChannelInboundHandler<Packet<?>> 
          // A decoder failure may leave bytes unread; continuing can desynchronize every following packet.
          PacketListener listener = this.packetListener;
          String botName = listener instanceof BotPlayHandler playHandler ? playHandler.getClient().getName() : "unknown";
-         String reason = "Bot packet decode failed (protocol=" + this.viaProtocolVersion + "): " + var2.getMessage();
+         String reason = "Bot packet decode failed on Minecraft 1.21.11: " + var2.getMessage();
          LOGGER.error("Bot {}: {}; closing connection to prevent packet stream desynchronization", botName, reason, var2);
-         this.disconnectionInfo = new DisconnectionInfo(Text.literal(reason + ". Try another protocol in Bot Control."));
+         this.disconnectionInfo = new DisconnectionInfo(Text.literal(reason + "."));
          var1.close();
       } else {
          boolean flag = !this.errored;

@@ -31,9 +31,10 @@ public abstract class MixinRecipeBookAddS2CPacket {
          } catch (RuntimeException exception) {
             int skipped = buffer.readableBytes();
             buffer.skipBytes(skipped);
-            LOGGER.warn("Skipping {} unread bytes in unsupported recipe_book_add packet: {}", skipped, exception.toString());
+            LOGGER.warn("Skipping unsupported recipe_book_add payload ({} unread bytes): {}", skipped, exception.toString());
             return new RecipeBookAddS2CPacket(List.of(), false);
          }
       });
+      LOGGER.info("Installed tolerant recipe_book_add decoder for headless bots (native Minecraft 1.21.11)");
    }
 }
