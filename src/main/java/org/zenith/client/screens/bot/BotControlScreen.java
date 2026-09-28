@@ -98,6 +98,9 @@ public class BotControlScreen extends CustomScreen {
    public boolean cursorLocked;
    public boolean loggedRenderError;
    public String lastRenderError;
+   public float containerScale = 1.0F;
+   public float containerOffsetX;
+   public float containerOffsetY;
    public double lastMouseX = Double.NaN;
    public double lastMouseY = Double.NaN;
    public Slot hoveredSlotCache;
@@ -275,16 +278,18 @@ public class BotControlScreen extends CustomScreen {
       if (this.lastRenderError != null) {
          var1.drawText(minecraftClient3.textRenderer, "ошибка рендера: " + this.lastRenderError, 4, 12, -65536, true);
       }
-      if (var2 == null || var3 == null || var4 == null) return;
+      if (var2 == null || var3 == null) return;
       BotPlayHandler playhandler = var2.getPlayHandler();
-      String s = "GUI бота: " + var4.getClass().getSimpleName() + ", syncId=" + var4.syncId
-         + (playhandler != null && playhandler.hasOpenScreen() ? ", открыт: " + playhandler.getCurrentScreenTitle().getString() : ", окна нет");
+      boolean handlerOpen = var3.currentScreenHandler != var3.playerScreenHandler;
+      Text title = playhandler != null ? playhandler.getCurrentScreenTitle() : null;
+      String s = "GUI бота: " + (handlerOpen ? var3.currentScreenHandler.getClass().getSimpleName() : "инвентарь")
+         + ", syncId=" + var3.currentScreenHandler.syncId
+         + (handlerOpen ? ", окно открыто" + (title != null ? ": " + title.getString() : " (заголовок не получен)") : ", окна нет");
       var1.drawText(minecraftClient3.textRenderer, s, 4, 22, -256, true);
    }
 
    public ScreenHandler currentUiHandler(BotClient var1, BotPlayer var2) {
-      BotPlayHandler botplayhandler = var1.getPlayHandler();
-      if (botplayhandler != null && botplayhandler.hasOpenScreen()) {
+      if (var2.currentScreenHandler != null && var2.currentScreenHandler != var2.playerScreenHandler) {
          this.inventoryOpen = false;
          return var2.currentScreenHandler;
       } else {
@@ -765,6 +770,16 @@ public class BotControlScreen extends CustomScreen {
       BotControlScreen_ContainerLayout botcontrolscreen_containerlayout = this.layoutFor(var2, var3);
       int i = (this.width - botcontrolscreen_containerlayout.width()) / 2;
       int j = (this.height - botcontrolscreen_containerlayout.height()) / 2;
+      float scale = Math.min(2.0F, Math.min((this.width - 24.0F) / botcontrolscreen_containerlayout.width(), (this.height - 36.0F) / botcontrolscreen_containerlayout.height()));
+      scale = Math.max(1.0F, scale);
+      float centerX = this.width / 2.0F;
+      float centerY = this.height / 2.0F;
+      this.containerScale = scale;
+      this.containerOffsetX = centerX * (1.0F - scale);
+      this.containerOffsetY = centerY * (1.0F - scale);
+      var1.getMatrices().pushMatrix();
+      var1.getMatrices().translate(this.containerOffsetX, this.containerOffsetY);
+      var1.getMatrices().scale(scale, scale);
       if (botcontrolscreen_containerlayout.texture() == null) {
          this.drawSyntheticPanel(var1, i, j, botcontrolscreen_containerlayout.width(), botcontrolscreen_containerlayout.height());
 
@@ -818,6 +833,8 @@ public class BotControlScreen extends CustomScreen {
          );
       }
 
+      var4 = this.containerMouseX(var4);
+      var5 = this.containerMouseY(var5);
       Slot slot2 = this.hoveredSlot(var2, var3, var4, var5);
       this.hoveredSlotCache = slot2;
       if (slot2 != null && slot2.canBeHighlighted()) {
@@ -867,6 +884,15 @@ public class BotControlScreen extends CustomScreen {
             minecraftClient3.textRenderer, list, itemstack1.getTooltipData(), var4, var5, (Identifier)itemstack1.get(DataComponentTypes.TOOLTIP_STYLE)
          );
       }
+      var1.getMatrices().popMatrix();
+   }
+
+   private int containerMouseX(int mouseX) {
+      return Math.round((mouseX - this.containerOffsetX) / this.containerScale);
+   }
+
+   private int containerMouseY(int mouseY) {
+      return Math.round((mouseY - this.containerOffsetY) / this.containerScale);
    }
 
    public void drawSyntheticPanel(HudDrawContext var1, int var2, int var3, int var4, int var5) {
@@ -1010,11 +1036,12 @@ public class BotControlScreen extends CustomScreen {
             ScreenHandler screenhandler = this.currentUiHandler(botclient, botplayer);
             if (screenhandler != null) {
                int i = var5 == MenuScreenId.call111 ? 1 : 0;
-               Slot slot = this.hoveredSlot(botplayer, screenhandler, (int)var1, (int)var3);
+               Slot slot = this.hoveredSlot(botplayer, screenhandler, this.containerMouseX((int)var1), this.containerMouseY((int)var3));
                if (slot != null) {
                   SlotActionType slotactiontype = hasShiftDown() ? SlotActionType.QUICK_MOVE : SlotActionType.PICKUP;
                   this.control.clickSlot(slot.id, i, slotactiontype);
-               } else if (!screenhandler.getCursorStack().isEmpty() && this.isClickOutsideBounds(botplayer, screenhandler, var1, var3)) {
+               } else if (!screenhandler.getCursorStack().isEmpty()
+                  && this.isClickOutsideBounds(botplayer, screenhandler, this.containerMouseX((int)var1), this.containerMouseY((int)var3))) {
                   this.control.clickSlot(64537, i, SlotActionType.PICKUP);
                }
             } else if (var5 == MenuScreenId.call004) {
