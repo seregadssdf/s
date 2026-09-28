@@ -6,8 +6,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.component.DataComponentTypes;
@@ -29,9 +27,6 @@ import org.zenith.event.EventTick;
 import org.zenith.module.Category;
 import org.zenith.module.Module;
 import org.zenith.module.ModuleInfo;
-import org.zenith.rotation.Rotation;
-import org.zenith.rotation.RotationEasing;
-import org.zenith.rotation.RotationTask;
 import org.zenith.setting.NumberSetting;
 
 /** Same sale pipeline as BotAutoSell, executed by the local player for testing. */
@@ -43,8 +38,6 @@ public final class AutoSell extends Module {
    private static final long GUI_TIMEOUT = 12000L;
    private static final long COMMAND_COOLDOWN = 3000L;
    private static final long MAX_LOG_STACK_PRICE = 250_000L;
-   // Read the original lore lines, as the other auction modules do.
-   private static final Pattern PRICE_PATTERN = Pattern.compile("Цена\\s*[:：][^0-9]{0,16}([0-9][0-9\\s,._]*)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
    public final NumberSetting price = new NumberSetting("module.autoSell.price", 19000.0F, 0.0F, 100000.0F, 1.0F, "module.autoSell.price.desc", "$", null, null);
 
    private Phase phase;
@@ -60,9 +53,19 @@ public final class AutoSell extends Module {
    private boolean sellCommandSent;
    private String lastMessage;
    private long lastMessageAt;
+   private int turnTotal;
+   private int turnTicksLeft;
+   private float turnStartYaw;
+   private float turnStartPitch;
+   private float turnTargetYaw;
+   private float turnTargetPitch;
+   private long nextSwayAt;
+   private float swayYawLeft;
+   private float swayPitchLeft;
+   private int refreshStep;
 
    private enum Phase {
-      INSPECT, BUY_LOGS, BUY_LOGS_CONFIRM, CRAFT_STICKS, BUY_EMERALDS, CRAFT_TABLE, CRAFT_SWORDS, SELL, SELL_CONFIRM, REFRESH, RECOVER
+      TURN, INSPECT, BUY_LOGS, BUY_LOGS_CONFIRM, CRAFT_STICKS, BUY_EMERALDS, CRAFT_TABLE, CRAFT_SWORDS, SELL, SELL_CONFIRM, REFRESH, RECOVER
    }
 
    @Override
@@ -80,8 +83,18 @@ public final class AutoSell extends Module {
       sellCommandSent = false;
       lastMessage = null;
       lastMessageAt = 0L;
-      requestTurnaround();
-      message("модуль включён: использую цикл AutoSell игрока");
+      refreshStep = 0;
+      swayYawLeft = 0.0F;
+      swayPitchLeft = 0.0F;
+      nextSwayAt = System.currentTimeMillis() + ThreadLocalRandom.current().nextLong(2000L, 10001L);
+      MinecraftClient startClient = MinecraftClient.getInstance();
+      if (startClient.player != null) {
+         startTurn(startClient);
+         message("модуль включён: разворот и запуск цикла AutoSell игрока");
+      } else {
+         phase = Phase.INSPECT;
+         message("модуль включён: использую цикл AutoSell игрока");
+      }
       super.onEnable();
    }
 
@@ -106,6 +119,8 @@ public final class AutoSell extends Module {
          enter(Phase.RECOVER, now);
          return;
       }
+      if (phase == Phase.TURN) { updateTurn(client); return; }
+      updateSway(client, now);
       if (now < nextAction) return;
       switch (phase) {
          case INSPECT -> inspect(client, now);
@@ -204,8 +219,8 @@ public final class AutoSell extends Module {
          return;
       }
       for (int i = 0; i < size; i++) if (menu.getSlot(i).getStack().isOf(Items.EMERALD)) {
-         click(client, i, 1, SlotActionType.QUICK_MOVE);
-         message("Shift+ПКМ по изумруду, жду покупку стака");
+         click(client, i, 0, SlotActionType.QUICK_MOVE);
+         message("Shift+ЛКМ по изумруду, жду покупку стака");
          schedule(now, 2000L);
          return;
       }
@@ -278,11 +293,13 @@ public final class AutoSell extends Module {
 
    private void sellConfirm(MinecraftClient client, long now) {
       if (!(client.player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
-      if (menu.slots.size() > 15) {
-         click(client, 15, 0, SlotActionType.PICKUP);
-         message(menu.getSlot(15).getStack().isOf(Items.LIME_DYE) ? "подтверждение продажи: лаймовый краситель" : "клик подтверждения по слоту 15");
-      }
-      schedule(now, 1500L);
+      int target = -1;
+      for (int i = 0; i < containerSlots(menu); i++) if (menu.getSlot(i).getStack().isOf(Items.LIME_DYE)) { target = i; break; }
+      if (target < 0 && menu.slots.size() > 15) target = 15;
+      if (target < 0) { message("слот подтверждения не найден, жду окно"); schedule(now); return; }
+      click(client, target, 0, SlotActionType.PICKUP);
+      message("подтверждение продажи: слот " + (target + 1) + (menu.getSlot(target).getStack().isOf(Items.LIME_DYE) ? " (лаймовый краситель)" : " (лаймовый краситель не найден)"));
+      enter(Phase.INSPECT, now);
    }
 
    private void refresh(MinecraftClient client, long now) {
@@ -296,8 +313,16 @@ public final class AutoSell extends Module {
       }
       if (!(client.player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
       int container = containerSlots(menu);
-      if (container >= 47) { click(client, 46, 0, SlotActionType.PICKUP); message("клик 47-го слота /ah"); schedule(now, 1500L); return; }
-      if (container >= 54) { click(client, container - 2, 0, SlotActionType.PICKUP); message("клик предпоследнего слота дабл-сундука"); schedule(now, 1500L); return; }
+      if (refreshStep == 0) {
+         if (container < 47) { enter(Phase.INSPECT, now); return; }
+         click(client, 46, 0, SlotActionType.PICKUP);
+         message("клик 47-го по счёту слота /ah");
+         refreshStep = 1;
+         schedule(now, 1500L);
+         return;
+      }
+      click(client, container - 2, 0, SlotActionType.PICKUP);
+      message("клик предпоследнего слота дабл-сундука");
       enter(Phase.INSPECT, now);
    }
 
@@ -350,20 +375,52 @@ public final class AutoSell extends Module {
       LoreComponent lore = stack.get(DataComponentTypes.LORE);
       if (lore == null) return -1;
       for (Text line : lore.lines()) {
-         Matcher matcher = PRICE_PATTERN.matcher(line.getString().replace('\u00a0', ' ').replace('\u202f', ' '));
-         if (!matcher.find()) continue;
-         String digits = matcher.group(1).replaceAll("[^0-9]", "");
-         try { return digits.isEmpty() ? -1 : Long.parseLong(digits); } catch (NumberFormatException ignored) { return -1; }
+         long price = priceFromText(line.getString());
+         if (price >= 0) return price;
       }
       return -1;
+   }
+
+   /** Сканируем после слова «Цена» до первой цифры: оформление вокруг цены нестандартное. */
+   private long priceFromText(String raw) {
+      String text = normalize(raw);
+      int at = text.indexOf("цена");
+      if (at < 0) return -1;
+      StringBuilder digits = new StringBuilder();
+      for (int i = at + 4; i < text.length(); i++) {
+         char c = text.charAt(i);
+         if (Character.isDigit(c)) { digits.append(Character.getNumericValue(c)); continue; }
+         boolean separator = digits.length() > 0
+            && (c == ',' || c == '.' || c == ' ' || c == '_' || c == '\'' || c == '\u00a0' || c == '\u202f');
+         if (separator) continue;
+         if (digits.length() > 0) break;
+      }
+      if (digits.isEmpty()) return -1;
+      try { return Long.parseLong(digits.toString()); } catch (NumberFormatException ignored) { return -1; }
+   }
+
+   /** Убирает невидимые символы оформления, ломающие поиск слова и числа. */
+   private String normalize(String value) {
+      StringBuilder result = new StringBuilder(value.length());
+      for (int i = 0; i < value.length(); i++) {
+         char c = value.charAt(i);
+         int type = Character.getType(c);
+         if (type == Character.FORMAT || type == Character.NON_SPACING_MARK || type == Character.ENCLOSING_MARK) continue;
+         result.append(c);
+      }
+      return result.toString().toLowerCase(Locale.ROOT);
    }
 
    private String sampleLore(ItemStack stack) {
       LoreComponent lore = stack.get(DataComponentTypes.LORE);
       if (lore == null) return "компонент lore отсутствует";
-      String lines = lore.lines().stream().map(Text::getString).filter(s -> !s.isBlank())
-         .map(s -> s.replaceAll("[\\p{Cntrl}]", "")).limit(6).reduce("", (a, b) -> a + " | " + b);
-      return lines.substring(0, Math.min(200, lines.length()));
+      List<String> lines = lore.lines().stream().map(Text::getString).filter(s -> !s.isBlank()).toList();
+      String joined = lines.stream().limit(6).reduce("", (a, b) -> a + " | " + b);
+      String target = lines.stream().filter(s -> s.toLowerCase(Locale.ROOT).contains("ена")).findFirst()
+         .orElse(lines.size() > 1 ? lines.get(1) : "");
+      StringBuilder codes = new StringBuilder();
+      for (int i = 0; i < target.length() && codes.length() < 280; i++) codes.append(String.format("U+%04X ", (int)target.charAt(i)));
+      return joined.substring(0, Math.min(160, joined.length())) + " ‖ коды строки цены: " + codes;
    }
 
    private int count(MinecraftClient client, java.util.function.Predicate<ItemStack> test) {
@@ -399,7 +456,7 @@ public final class AutoSell extends Module {
    private boolean commandReady(long now) { return now - lastCommandAt >= COMMAND_COOLDOWN; }
    private void schedule(long now) { nextAction = now + ThreadLocalRandom.current().nextLong(ACTION_MIN, ACTION_MAX + 1); }
    private void schedule(long now, long extra) { nextAction = now + extra + ThreadLocalRandom.current().nextLong(ACTION_MIN, ACTION_MAX + 1); }
-   private void enter(Phase next, long now) { phase = next; phaseStarted = now; schedule(now); message("переход на стадию " + next); }
+   private void enter(Phase next, long now) { phase = next; phaseStarted = now; if (next == Phase.REFRESH) refreshStep = 0; schedule(now); message("переход на стадию " + next); }
 
    private void message(String text) {
       MinecraftClient client = MinecraftClient.getInstance();
@@ -411,20 +468,48 @@ public final class AutoSell extends Module {
       client.player.sendMessage(Text.literal("§eAutoSell [" + phase + "]: §f" + text), false);
    }
 
-   /** Стартовый разворот на ~180 через менеджер ротации (как KillAura/HolyWorld). */
-   private void requestTurnaround() {
-      try {
-         MinecraftClient client = MinecraftClient.getInstance();
-         if (client.player == null) return;
-         float targetYaw = client.player.getYaw() + 180.0F + (ThreadLocalRandom.current().nextFloat() * 10.0F - 5.0F);
-         float targetPitch = ThreadLocalRandom.current().nextFloat() * 4.0F - 2.0F;
-         Rotation target = new Rotation(targetYaw, targetPitch);
-         scopedRotationManager().on23(new RotationTask(target, () -> {
-            RotationEasing easing = scopedRotationManager().int150();
-            return easing.on23(easing.HudPreviewItem(), target);
-         }, scopedRotationManager().int150().HudPreviewItem()), 20, this);
-      } catch (Exception ignored) {
-         // Ротация необязательна: цикл продолжит работу без неё.
+   /** Разворот камеры на ~180 при включении: прямое плавное ведение, видно игроку и серверу. */
+   private void startTurn(MinecraftClient client) {
+      turnStartYaw = client.player.getYaw();
+      turnStartPitch = client.player.getPitch();
+      turnTargetYaw = turnStartYaw + 180.0F + (ThreadLocalRandom.current().nextFloat() * 10.0F - 5.0F);
+      turnTargetPitch = Math.max(-90.0F, Math.min(90.0F, turnStartPitch + (ThreadLocalRandom.current().nextFloat() * 4.0F - 2.0F)));
+      turnTotal = 50 + ThreadLocalRandom.current().nextInt(25);
+      turnTicksLeft = turnTotal;
+      phase = Phase.TURN;
+   }
+
+   private void updateTurn(MinecraftClient client) {
+      if (turnTicksLeft <= 0) { enter(Phase.INSPECT, System.currentTimeMillis()); return; }
+      turnTicksLeft--;
+      float progress = 1.0F - turnTicksLeft / (float)Math.max(1, turnTotal);
+      float eased = progress * progress * (3.0F - 2.0F * progress);
+      client.player.setYaw(turnStartYaw + (turnTargetYaw - turnStartYaw) * eased);
+      client.player.setPitch(turnStartPitch + (turnTargetPitch - turnStartPitch) * eased);
+      if (turnTicksLeft == 0) enter(Phase.INSPECT, System.currentTimeMillis());
+   }
+
+   /** Лёгкое шевеление камеры раз в 2–10 секунд, амплитуда 0.00001–5 градусов. */
+   private void updateSway(MinecraftClient client, long now) {
+      if (now >= nextSwayAt) {
+         nextSwayAt = now + ThreadLocalRandom.current().nextLong(2000L, 10001L);
+         swayYawLeft = randomOffset();
+         swayPitchLeft = randomOffset() * 0.4F;
       }
+      if (Math.abs(swayYawLeft) > 0.00001F) {
+         float step = swayYawLeft * 0.2F;
+         client.player.setYaw(client.player.getYaw() + step);
+         swayYawLeft -= step;
+      }
+      if (Math.abs(swayPitchLeft) > 0.00001F) {
+         float step = swayPitchLeft * 0.2F;
+         client.player.setPitch(Math.max(-90.0F, Math.min(90.0F, client.player.getPitch() + step)));
+         swayPitchLeft -= step;
+      }
+   }
+
+   private float randomOffset() {
+      double magnitude = 0.00001 + ThreadLocalRandom.current().nextDouble() * (5.0 - 0.00001);
+      return (float)(ThreadLocalRandom.current().nextBoolean() ? magnitude : -magnitude);
    }
 }
