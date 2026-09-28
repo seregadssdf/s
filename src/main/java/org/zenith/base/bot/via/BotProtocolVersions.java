@@ -7,6 +7,7 @@ public final class BotProtocolVersions {
    public static final int NATIVE = -1;
    public static final List<BotProtocolVersions_Entry> ENTRIES = List.of(
       new BotProtocolVersions_Entry(-1, SharedConstants.getGameVersion().name()),
+      new BotProtocolVersions_Entry(769, "1.21.4"),
       new BotProtocolVersions_Entry(768, "1.21.3"),
       new BotProtocolVersions_Entry(767, "1.21.1"),
       new BotProtocolVersions_Entry(766, "1.20.6"),
