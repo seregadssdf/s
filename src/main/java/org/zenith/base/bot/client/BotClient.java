@@ -9,6 +9,7 @@ import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.network.DisconnectionInfo;
 import net.minecraft.network.PacketApplyBatcher;
 import net.minecraft.network.packet.c2s.login.LoginHelloC2SPacket;
@@ -341,6 +342,7 @@ public final class BotClient extends ReentrantThreadExecutor<Runnable> {
    public void onChat(Text var1) {
       synchronized (this.chatLog) {
          this.chatLog.addLast(new ChatMessage(LocalTime.now().format(CHAT_TIME_FORMAT), var1));
+         BotChatLog.write(MinecraftClient.getInstance().runDirectory.toPath(), this.getName(), var1.getString());
 
          while (this.chatLog.size() > 200) {
             this.chatLog.removeFirst();

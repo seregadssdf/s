@@ -81,6 +81,7 @@ dependencies {
     bundledModJars.each { jarName ->
         modImplementation files("libs/${jarName}")
     }
+    testImplementation 'junit:junit:4.13.2'
 }
 
 loom {
@@ -118,6 +119,8 @@ java {
     toolchain.languageVersion = JavaLanguageVersion.of(21)
     withSourcesJar()
 }
+
+tasks.named('test') { useJUnit() }
 
 jar {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
