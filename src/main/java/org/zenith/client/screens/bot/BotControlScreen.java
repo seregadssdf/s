@@ -771,7 +771,7 @@ public class BotControlScreen extends CustomScreen {
       int i = (this.width - botcontrolscreen_containerlayout.width()) / 2;
       int j = (this.height - botcontrolscreen_containerlayout.height()) / 2;
       float scale = Math.min(2.0F, Math.min((this.width - 24.0F) / botcontrolscreen_containerlayout.width(), (this.height - 36.0F) / botcontrolscreen_containerlayout.height()));
-      scale = Math.max(1.0F, scale);
+      scale = Math.max(0.65F, scale);
       float centerX = this.width / 2.0F;
       float centerY = this.height / 2.0F;
       this.containerScale = scale;
@@ -782,10 +782,6 @@ public class BotControlScreen extends CustomScreen {
       var1.getMatrices().scale(scale, scale);
       if (botcontrolscreen_containerlayout.texture() == null) {
          this.drawSyntheticPanel(var1, i, j, botcontrolscreen_containerlayout.width(), botcontrolscreen_containerlayout.height());
-
-         for (Slot slot : var3.slots) {
-            this.drawSlotFrame(var1, i + slot.x, j + slot.y);
-         }
       } else if (botcontrolscreen_containerlayout.chestRows() > 0) {
          var1.drawTexture(
             RenderPipelines.GUI_TEXTURED,
@@ -824,6 +820,11 @@ public class BotControlScreen extends CustomScreen {
             256,
             256
          );
+      }
+
+      // Explicit frames keep crafting and server-menu slots legible even when texture UVs differ.
+      for (Slot slot : var3.slots) {
+         if (slot.isEnabled()) this.drawVisibleSlotFrame(var1, i + slot.x, j + slot.y);
       }
 
       if (var3 == var2.playerScreenHandler) {
@@ -866,6 +867,8 @@ public class BotControlScreen extends CustomScreen {
             false
          );
       }
+
+      if (var3 instanceof CraftingScreenHandler) this.renderCraftingLabels(var1, var2, var3, i, j);
 
       ItemStack itemstack = var3.getCursorStack();
       if (!itemstack.isEmpty()) {
@@ -910,6 +913,36 @@ public class BotControlScreen extends CustomScreen {
       var1.fill(var2 - 1, var3, var2, var3 + 16, -13158601);
       var1.fill(var2, var3 + 16, var2 + 17, var3 + 17, -1);
       var1.fill(var2 + 16, var3, var2 + 17, var3 + 16, -1);
+   }
+
+   private void drawVisibleSlotFrame(HudDrawContext context, int x, int y) {
+      context.fill(x - 1, y - 1, x + 17, y + 17, 0xE6101010);
+      context.fill(x, y, x + 16, y + 16, 0xFF8A8A8A);
+      context.fill(x + 1, y + 1, x + 15, y + 15, 0xFF242424);
+      context.fill(x, y, x + 16, y + 1, 0xFFB8B8B8);
+      context.fill(x, y, x + 1, y + 16, 0xFFB8B8B8);
+      context.fill(x + 1, y + 15, x + 16, y + 16, 0xFF111111);
+      context.fill(x + 15, y + 1, x + 16, y + 15, 0xFF111111);
+   }
+
+   private void renderCraftingLabels(HudDrawContext context, BotPlayer player, ScreenHandler handler, int left, int top) {
+      if (handler.slots.size() > 1) {
+         Slot output = handler.getSlot(0);
+         Slot firstInput = handler.getSlot(1);
+         context.drawText(minecraftClient3.textRenderer, "РЕЗУЛЬТАТ", left + output.x - 3, top + output.y - 12, 0xFFFFFFFF, true);
+         context.drawText(minecraftClient3.textRenderer, "СЕТКА 3×3", left + firstInput.x - 2, top + firstInput.y - 12, 0xFFFFFFFF, true);
+      }
+      int inventoryTop = Integer.MAX_VALUE;
+      int inventoryLeft = Integer.MAX_VALUE;
+      for (Slot slot : handler.slots) {
+         if (slot.inventory == player.getInventory()) {
+            inventoryTop = Math.min(inventoryTop, slot.y);
+            inventoryLeft = Math.min(inventoryLeft, slot.x);
+         }
+      }
+      if (inventoryTop != Integer.MAX_VALUE) {
+         context.drawText(minecraftClient3.textRenderer, "ИНВЕНТАРЬ", left + inventoryLeft, top + inventoryTop - 12, 0xFFFFFFFF, true);
+      }
    }
 
    public Text containerTitle(BotPlayer var1, ScreenHandler var2) {

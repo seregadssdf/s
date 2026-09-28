@@ -72,6 +72,8 @@ public final class BotAutoSell extends BotModule {
    private boolean craftingTableTurnStarted;
    private boolean craftingTableOpenRequested;
    private boolean sellConfirmClicked;
+   private boolean sellSwordPickupPending;
+   private int sellSwordMoveAttempts;
    private int sellConfirmAttempts;
    private int sellConfirmTargetSlot = -1;
    private long sellConfirmLastClickAt;
@@ -102,6 +104,8 @@ public final class BotAutoSell extends BotModule {
       craftingTableTurnStarted = false;
       craftingTableOpenRequested = false;
       sellConfirmClicked = false;
+      sellSwordPickupPending = false;
+      sellSwordMoveAttempts = 0;
       sellConfirmAttempts = 0;
       sellConfirmTargetSlot = -1;
       sellConfirmLastClickAt = 0L;
@@ -454,12 +458,71 @@ public final class BotAutoSell extends BotModule {
          return;
       }
       if (!(player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
+
+      int containerSize = containerSlots(menu);
+      int swordInContainer = -1;
+      for (int i = 0; i < containerSize; i++) {
+         if (isSword(menu.getSlot(i).getStack())) { swordInContainer = i; break; }
+      }
+      if (swordInContainer < 0) {
+         if (sellSwordPickupPending) {
+            ItemStack cursor = player.currentScreenHandler.getCursorStack();
+            if (!cursor.isEmpty()) {
+               int target = -1;
+               int itemSlots = Math.max(0, containerSize - 9);
+               for (int i = 0; i < itemSlots; i++) {
+                  if (menu.getSlot(i).getStack().isEmpty()) { target = i; break; }
+               }
+               if (target >= 0) {
+                  click(target, 0, SlotActionType.PICKUP);
+                  debug("кладу меч с курсора в слот " + (target + 1) + " окна продажи");
+               } else {
+                  debug("в окне sellgui нет пустого слота для меча; возвращаю его в инвентарь");
+                  if (sword != null) click(sword.id, 0, SlotActionType.PICKUP);
+                  sellSwordPickupPending = false;
+                  schedule(now, 1000L);
+                  return;
+               }
+            }
+            sellSwordPickupPending = false;
+            schedule(now, 900L);
+            return;
+         }
+
+         if (sword == null) {
+            debug("меча нет ни в инвентаре, ни в окне sellgui; жду синхронизацию слотов");
+            schedule(now, 800L);
+            return;
+         }
+         if (sellSwordMoveAttempts < 2) {
+            click(sword.id, 0, SlotActionType.QUICK_MOVE);
+            sellSwordMoveAttempts++;
+            debug("перекладываю меч в sellgui Shift+ЛКМ, попытка " + sellSwordMoveAttempts + "/2");
+            schedule(now, 900L);
+            return;
+         }
+         click(sword.id, 0, SlotActionType.PICKUP);
+         sellSwordPickupPending = true;
+         debug("Shift+ЛКМ не перенёс меч; беру его курсором для ручного размещения");
+         schedule(now, 700L);
+         return;
+      }
+
+      if (sword != null) {
+         debug("меч найден в окне sellgui, но остался в инвентаре; жду серверный ответ");
+         schedule(now, 700L);
+         return;
+      }
+      if (!sellConfirmClicked) debug("меч подтверждён в окне sellgui, ищу кнопку выставления");
       if (sellConfirmClicked) {
          if (sword == null) {
-            debug("сервер убрал меч из инвентаря; закрываю окно и обновляю лоты");
-            player.closeScreen();
-            enter(Phase.REFRESH, now);
-            return;
+            if (sellConfirmTargetSlot >= 0 && sellConfirmTargetSlot < containerSize
+               && menu.getSlot(sellConfirmTargetSlot).getStack().isEmpty()) {
+               debug("сервер принял подтверждение и закрыл кнопку; закрываю окно");
+               player.closeScreen();
+               enter(Phase.REFRESH, now);
+               return;
+            }
          }
          if (now - sellConfirmLastClickAt < 1800L) { schedule(now, 500L); return; }
          if (sellConfirmAttempts >= 3) {
@@ -482,12 +545,12 @@ public final class BotAutoSell extends BotModule {
          return;
       }
       int dyeSlot = -1;
-      for (int i = 0; i < containerSlots(menu); i++) {
+      for (int i = 0; i < containerSize; i++) {
          if (menu.getSlot(i).getStack().isOf(Items.LIME_DYE)) { dyeSlot = i; break; }
       }
       if (dyeSlot >= 0) {
          sellConfirmTargetSlot = dyeSlot;
-      } else if (containerSlots(menu) >= 15) {
+      } else if (containerSize >= 15) {
          ItemStack fallback = menu.getSlot(14).getStack();
          sellConfirmTargetSlot = 14;
          debug("лаймовый краситель не найден; использую указанный 15-й слот: " + fallback.getName().getString());
@@ -733,6 +796,8 @@ public final class BotAutoSell extends BotModule {
       }
       if (next == Phase.SELL_CONFIRM && previous != Phase.SELL_CONFIRM) {
          sellConfirmClicked = false;
+         sellSwordPickupPending = false;
+         sellSwordMoveAttempts = 0;
          sellConfirmAttempts = 0;
          sellConfirmTargetSlot = -1;
          sellConfirmLastClickAt = 0L;
