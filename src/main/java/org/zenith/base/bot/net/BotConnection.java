@@ -191,8 +191,13 @@ public final class BotConnection extends SimpleChannelInboundHandler<Packet<?>> 
       if (var2 instanceof PacketEncoderException) {
          LOGGER.debug("Skipping packet due to errors", var2.getCause());
       } else if (var2 instanceof DecoderException) {
-         // Length-prefixed frames stay in sync, so one undecodable packet (e.g. custom recipe_book_add) is skipped, bot stays online.
-         LOGGER.warn("Bot: skipping undecodable packet ({} / {}), connection kept alive", var2.getMessage(), var2.getCause());
+         // A decoder failure may leave bytes unread; continuing can desynchronize every following packet.
+         PacketListener listener = this.packetListener;
+         String botName = listener instanceof BotPlayHandler playHandler ? playHandler.getClient().getName() : "unknown";
+         String reason = "Bot packet decode failed (protocol=" + this.viaProtocolVersion + "): " + var2.getMessage();
+         LOGGER.error("Bot {}: {}; closing connection to prevent packet stream desynchronization", botName, reason, var2);
+         this.disconnectionInfo = new DisconnectionInfo(Text.literal(reason + ". Try another protocol in Bot Control."));
+         var1.close();
       } else {
          boolean flag = !this.errored;
          this.errored = true;
