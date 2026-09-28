@@ -96,6 +96,11 @@ public class BotControlScreen extends CustomScreen {
    public BotWorldView view;
    public boolean inventoryOpen;
    public boolean cursorLocked;
+   public boolean loggedRenderError;
+   public String lastRenderError;
+   public float containerScale = 1.0F;
+   public float containerOffsetX;
+   public float containerOffsetY;
    public double lastMouseX = Double.NaN;
    public double lastMouseY = Double.NaN;
    public Slot hoveredSlotCache;
@@ -216,6 +221,7 @@ public class BotControlScreen extends CustomScreen {
             minecraftClient3.textRenderer, s2, (this.width - minecraftClient3.textRenderer.getWidth(s2)) / 2, this.height / 2 + 8, -6643542, true
          );
       } else {
+         try {
          int i = minecraftClient3.getWindow().getFramebufferWidth();
          int j = minecraftClient3.getWindow().getFramebufferHeight();
          boolean flag4 = this.view != null && this.view.renderToFbo(i, j);
@@ -235,7 +241,9 @@ public class BotControlScreen extends CustomScreen {
                0.0F
             );
          } else {
-            String s = "Загрузка мира бота...";
+            String s = this.view != null && this.view.lastError != null
+               ? "Загрузка мира бота... (" + this.view.lastError + ")"
+               : "Загрузка мира бота...";
             var1.drawText(
                minecraftClient3.textRenderer, s, (this.width - minecraftClient3.textRenderer.getWidth(s)) / 2, this.height / 2 - 4, -1, true
             );
@@ -253,12 +261,35 @@ public class BotControlScreen extends CustomScreen {
             this.hoveredSlotCache = null;
             this.renderCrosshair(var1);
          }
+         } catch (Throwable throwable) {
+            this.lastRenderError = throwable.toString();
+            if (!this.loggedRenderError) {
+               this.loggedRenderError = true;
+               System.err.println("[BotControlScreen] render failed:");
+               throwable.printStackTrace();
+            }
+         }
+         this.renderStateLine(var1, botclient, botplayer, screenhandler);
       }
    }
 
+   /** Панель состояния: окно бота и ошибка рендера видны, даже если картинка не собралась. */
+   private void renderStateLine(HudDrawContext var1, BotClient var2, BotPlayer var3, ScreenHandler var4) {
+      if (this.lastRenderError != null) {
+         var1.drawText(minecraftClient3.textRenderer, "ошибка рендера: " + this.lastRenderError, 4, 12, -65536, true);
+      }
+      if (var2 == null || var3 == null) return;
+      BotPlayHandler playhandler = var2.getPlayHandler();
+      boolean handlerOpen = var3.currentScreenHandler != var3.playerScreenHandler;
+      Text title = playhandler != null ? playhandler.getCurrentScreenTitle() : null;
+      String s = "GUI бота: " + (handlerOpen ? var3.currentScreenHandler.getClass().getSimpleName() : "инвентарь")
+         + ", syncId=" + var3.currentScreenHandler.syncId
+         + (handlerOpen ? ", окно открыто" + (title != null ? ": " + title.getString() : " (заголовок не получен)") : ", окна нет");
+      var1.drawText(minecraftClient3.textRenderer, s, 4, 22, -256, true);
+   }
+
    public ScreenHandler currentUiHandler(BotClient var1, BotPlayer var2) {
-      BotPlayHandler botplayhandler = var1.getPlayHandler();
-      if (botplayhandler != null && botplayhandler.hasOpenScreen()) {
+      if (var2.currentScreenHandler != null && var2.currentScreenHandler != var2.playerScreenHandler) {
          this.inventoryOpen = false;
          return var2.currentScreenHandler;
       } else {
@@ -739,50 +770,21 @@ public class BotControlScreen extends CustomScreen {
       BotControlScreen_ContainerLayout botcontrolscreen_containerlayout = this.layoutFor(var2, var3);
       int i = (this.width - botcontrolscreen_containerlayout.width()) / 2;
       int j = (this.height - botcontrolscreen_containerlayout.height()) / 2;
-      if (botcontrolscreen_containerlayout.texture() == null) {
-         this.drawSyntheticPanel(var1, i, j, botcontrolscreen_containerlayout.width(), botcontrolscreen_containerlayout.height());
+      float scale = Math.min(2.0F, Math.min((this.width - 24.0F) / botcontrolscreen_containerlayout.width(), (this.height - 36.0F) / botcontrolscreen_containerlayout.height()));
+      scale = Math.max(0.65F, scale);
+      float centerX = this.width / 2.0F;
+      float centerY = this.height / 2.0F;
+      this.containerScale = scale;
+      this.containerOffsetX = centerX * (1.0F - scale);
+      this.containerOffsetY = centerY * (1.0F - scale);
+      var1.getMatrices().pushMatrix();
+      var1.getMatrices().translate(this.containerOffsetX, this.containerOffsetY);
+      var1.getMatrices().scale(scale, scale);
+      this.drawContainerBackground(var1, var2, var3, botcontrolscreen_containerlayout, i, j);
 
-         for (Slot slot : var3.slots) {
-            this.drawSlotFrame(var1, i + slot.x, j + slot.y);
-         }
-      } else if (botcontrolscreen_containerlayout.chestRows() > 0) {
-         var1.drawTexture(
-            RenderPipelines.GUI_TEXTURED,
-            botcontrolscreen_containerlayout.texture(),
-            i,
-            j,
-            0.0F,
-            0.0F,
-            botcontrolscreen_containerlayout.width(),
-            botcontrolscreen_containerlayout.chestRows() * 18 + 17,
-            256,
-            256
-         );
-         var1.drawTexture(
-            RenderPipelines.GUI_TEXTURED,
-            botcontrolscreen_containerlayout.texture(),
-            i,
-            j + botcontrolscreen_containerlayout.chestRows() * 18 + 17,
-            0.0F,
-            126.0F,
-            botcontrolscreen_containerlayout.width(),
-            96,
-            256,
-            256
-         );
-      } else {
-         var1.drawTexture(
-            RenderPipelines.GUI_TEXTURED,
-            botcontrolscreen_containerlayout.texture(),
-            i,
-            j,
-            0.0F,
-            0.0F,
-            botcontrolscreen_containerlayout.width(),
-            botcontrolscreen_containerlayout.height(),
-            256,
-            256
-         );
+      // Explicit frames keep crafting and server-menu slots legible even when texture UVs differ.
+      for (Slot slot : var3.slots) {
+         if (slot.isEnabled()) this.drawVisibleSlotFrame(var1, i + slot.x, j + slot.y);
       }
 
       if (var3 == var2.playerScreenHandler) {
@@ -792,6 +794,8 @@ public class BotControlScreen extends CustomScreen {
          );
       }
 
+      var4 = this.containerMouseX(var4);
+      var5 = this.containerMouseY(var5);
       Slot slot2 = this.hoveredSlot(var2, var3, var4, var5);
       this.hoveredSlotCache = slot2;
       if (slot2 != null && slot2.canBeHighlighted()) {
@@ -824,6 +828,8 @@ public class BotControlScreen extends CustomScreen {
          );
       }
 
+      if (var3 instanceof CraftingScreenHandler) this.renderCraftingLabels(var1, var2, var3, i, j);
+
       ItemStack itemstack = var3.getCursorStack();
       if (!itemstack.isEmpty()) {
          var1.getMatrices().pushMatrix();
@@ -841,15 +847,64 @@ public class BotControlScreen extends CustomScreen {
             minecraftClient3.textRenderer, list, itemstack1.getTooltipData(), var4, var5, (Identifier)itemstack1.get(DataComponentTypes.TOOLTIP_STYLE)
          );
       }
+      var1.getMatrices().popMatrix();
+   }
+
+   private int containerMouseX(int mouseX) {
+      return Math.round((mouseX - this.containerOffsetX) / this.containerScale);
+   }
+
+   private int containerMouseY(int mouseY) {
+      return Math.round((mouseY - this.containerOffsetY) / this.containerScale);
    }
 
    public void drawSyntheticPanel(HudDrawContext var1, int var2, int var3, int var4, int var5) {
-      var1.fill(var2 - 1, var3 - 1, var2 + var4 + 1, var3 + var5 + 1, -16777216);
-      var1.fill(var2, var3, var2 + var4, var3 + var5, -3750202);
-      var1.fill(var2, var3, var2 + var4 - 1, var3 + 1, -1);
-      var1.fill(var2, var3 + 1, var2 + 1, var3 + var5 - 1, -1);
-      var1.fill(var2 + 1, var3 + var5 - 1, var2 + var4, var3 + var5, -11184811);
-      var1.fill(var2 + var4 - 1, var3 + 1, var2 + var4, var3 + var5 - 1, -11184811);
+      var1.fill(var2 - 2, var3 - 2, var2 + var4 + 2, var3 + var5 + 2, 0xFF101014);
+      var1.fill(var2 - 1, var3 - 1, var2 + var4 + 1, var3 + var5 + 1, 0xFFE5E5E5);
+      var1.fill(var2, var3, var2 + var4, var3 + var5, 0xFF3B3B3B);
+      var1.fill(var2, var3, var2 + var4, var3 + 1, 0xFFFFFFFF);
+      var1.fill(var2, var3, var2 + 1, var3 + var5, 0xFFFFFFFF);
+      var1.fill(var2, var3 + var5 - 1, var2 + var4, var3 + var5, 0xFF171717);
+      var1.fill(var2 + var4 - 1, var3, var2 + var4, var3 + var5, 0xFF171717);
+   }
+
+   /** Container backplates are drawn with solid fills so missing or replaced GUI textures cannot hide menus. */
+   private void drawContainerBackground(HudDrawContext context, BotPlayer player, ScreenHandler handler,
+         BotControlScreen_ContainerLayout layout, int left, int top) {
+      int width = layout.width();
+      int height = layout.height();
+      drawSyntheticPanel(context, left, top, width, height);
+      context.fill(left + 2, top + 2, left + width - 2, top + 22, 0xFF686868);
+      context.fill(left + 3, top + 3, left + width - 3, top + 21, 0xFF515151);
+
+      if (handler instanceof GenericContainerScreenHandler container) {
+         int rowsBottom = top + 17 + container.getRows() * 18;
+         context.fill(left + 3, top + 23, left + width - 3, rowsBottom, 0xFF656565);
+         context.fill(left + 3, rowsBottom, left + width - 3, rowsBottom + 2, 0xFF242424);
+         context.fill(left + 3, rowsBottom + 2, left + width - 3, top + height - 3, 0xFF626262);
+      } else if (handler instanceof CraftingScreenHandler) {
+         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, maxX = 0, maxY = 0;
+         for (Slot slot : handler.slots) {
+            if (slot.inventory == player.getInventory()) continue;
+            minX = Math.min(minX, slot.x);
+            minY = Math.min(minY, slot.y);
+            maxX = Math.max(maxX, slot.x + 16);
+            maxY = Math.max(maxY, slot.y + 16);
+         }
+         if (minX != Integer.MAX_VALUE) {
+            context.fill(left + minX - 7, top + minY - 7, left + maxX + 7, top + maxY + 7, 0xFF242424);
+            context.fill(left + minX - 6, top + minY - 6, left + maxX + 6, top + maxY + 6, 0xFF777777);
+            context.fill(left + minX - 4, top + minY - 4, left + maxX + 4, top + maxY + 4, 0xFF4A4A4A);
+         }
+         int inventoryTop = Integer.MAX_VALUE;
+         for (Slot slot : handler.slots) if (slot.inventory == player.getInventory()) inventoryTop = Math.min(inventoryTop, slot.y);
+         if (inventoryTop != Integer.MAX_VALUE) {
+            context.fill(left + 3, top + inventoryTop - 9, left + width - 3, top + inventoryTop - 7, 0xFF242424);
+            context.fill(left + 3, top + inventoryTop - 7, left + width - 3, top + height - 3, 0xFF626262);
+         }
+      } else {
+         context.fill(left + 3, top + 23, left + width - 3, top + height - 3, 0xFF626262);
+      }
    }
 
    public void drawSlotFrame(HudDrawContext var1, int var2, int var3) {
@@ -858,6 +913,36 @@ public class BotControlScreen extends CustomScreen {
       var1.fill(var2 - 1, var3, var2, var3 + 16, -13158601);
       var1.fill(var2, var3 + 16, var2 + 17, var3 + 17, -1);
       var1.fill(var2 + 16, var3, var2 + 17, var3 + 16, -1);
+   }
+
+   private void drawVisibleSlotFrame(HudDrawContext context, int x, int y) {
+      context.fill(x - 1, y - 1, x + 17, y + 17, 0xE6101010);
+      context.fill(x, y, x + 16, y + 16, 0xFF8A8A8A);
+      context.fill(x + 1, y + 1, x + 15, y + 15, 0xFF242424);
+      context.fill(x, y, x + 16, y + 1, 0xFFB8B8B8);
+      context.fill(x, y, x + 1, y + 16, 0xFFB8B8B8);
+      context.fill(x + 1, y + 15, x + 16, y + 16, 0xFF111111);
+      context.fill(x + 15, y + 1, x + 16, y + 15, 0xFF111111);
+   }
+
+   private void renderCraftingLabels(HudDrawContext context, BotPlayer player, ScreenHandler handler, int left, int top) {
+      if (handler.slots.size() > 1) {
+         Slot output = handler.getSlot(0);
+         Slot firstInput = handler.getSlot(1);
+         context.drawText(minecraftClient3.textRenderer, "РЕЗУЛЬТАТ", left + output.x - 3, top + output.y - 12, 0xFFFFFFFF, true);
+         context.drawText(minecraftClient3.textRenderer, "СЕТКА 3×3", left + firstInput.x - 2, top + firstInput.y - 12, 0xFFFFFFFF, true);
+      }
+      int inventoryTop = Integer.MAX_VALUE;
+      int inventoryLeft = Integer.MAX_VALUE;
+      for (Slot slot : handler.slots) {
+         if (slot.inventory == player.getInventory()) {
+            inventoryTop = Math.min(inventoryTop, slot.y);
+            inventoryLeft = Math.min(inventoryLeft, slot.x);
+         }
+      }
+      if (inventoryTop != Integer.MAX_VALUE) {
+         context.drawText(minecraftClient3.textRenderer, "ИНВЕНТАРЬ", left + inventoryLeft, top + inventoryTop - 12, 0xFFFFFFFF, true);
+      }
    }
 
    public Text containerTitle(BotPlayer var1, ScreenHandler var2) {
@@ -984,11 +1069,12 @@ public class BotControlScreen extends CustomScreen {
             ScreenHandler screenhandler = this.currentUiHandler(botclient, botplayer);
             if (screenhandler != null) {
                int i = var5 == MenuScreenId.call111 ? 1 : 0;
-               Slot slot = this.hoveredSlot(botplayer, screenhandler, (int)var1, (int)var3);
+               Slot slot = this.hoveredSlot(botplayer, screenhandler, this.containerMouseX((int)var1), this.containerMouseY((int)var3));
                if (slot != null) {
                   SlotActionType slotactiontype = hasShiftDown() ? SlotActionType.QUICK_MOVE : SlotActionType.PICKUP;
                   this.control.clickSlot(slot.id, i, slotactiontype);
-               } else if (!screenhandler.getCursorStack().isEmpty() && this.isClickOutsideBounds(botplayer, screenhandler, var1, var3)) {
+               } else if (!screenhandler.getCursorStack().isEmpty()
+                  && this.isClickOutsideBounds(botplayer, screenhandler, this.containerMouseX((int)var1), this.containerMouseY((int)var3))) {
                   this.control.clickSlot(64537, i, SlotActionType.PICKUP);
                }
             } else if (var5 == MenuScreenId.call004) {

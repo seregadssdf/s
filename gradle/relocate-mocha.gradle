@@ -158,3 +158,25 @@ ext.mochaShimModules = mochaShimCoords.collect { coords ->
     def parts = coords.split(':')
     "zenith.shims:${parts[1]}:${parts[2]}"
 }
+
+// Loom needs these files after `clean` because its runtime remapper reads their paths directly.
+// The shims are created during configuration above; without this hook, `clean` deletes them again
+// before `runClient` launches Fabric.
+tasks.named('clean', Delete).configure {
+    doLast {
+        mochaShimCoords.each { coords ->
+            def parts = coords.split(':')
+            def source = configurations.detachedConfiguration(dependencies.create(coords))
+                    .resolve().find { it.name.endsWith('.jar') }
+            if (source == null) {
+                throw new GradleException("не найден jar для ${coords}")
+            }
+            def target = new File(mochaShimOutDir, "${parts[1]}-${parts[2]}-shim.jar")
+            rewriteJar(source, target, [
+                    (MOCHA_FROM_SLASH): MOCHA_TO_SLASH,
+                    (MOCHA_FROM_DOT)  : MOCHA_TO_DOT
+            ])
+            logger.lifecycle("mocha-shim: restored after clean: ${target.name}")
+        }
+    }
+}

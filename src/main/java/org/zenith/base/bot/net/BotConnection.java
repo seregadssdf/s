@@ -18,6 +18,7 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.codec.DecoderException;
 import io.netty.handler.flow.FlowControlHandler;
 import io.netty.handler.proxy.ProxyHandler;
 import io.netty.handler.timeout.ReadTimeoutHandler;
@@ -189,6 +190,14 @@ public final class BotConnection extends SimpleChannelInboundHandler<Packet<?>> 
    public void exceptionCaught(ChannelHandlerContext var1, Throwable var2) {
       if (var2 instanceof PacketEncoderException) {
          LOGGER.debug("Skipping packet due to errors", var2.getCause());
+      } else if (var2 instanceof DecoderException) {
+         // A decoder failure may leave bytes unread; continuing can desynchronize every following packet.
+         PacketListener listener = this.packetListener;
+         String botName = listener instanceof BotPlayHandler playHandler ? playHandler.getClient().getName() : "unknown";
+         String reason = "Bot packet decode failed on Minecraft 1.21.11: " + var2.getMessage();
+         LOGGER.error("Bot {}: {}; closing connection to prevent packet stream desynchronization", botName, reason, var2);
+         this.disconnectionInfo = new DisconnectionInfo(Text.literal(reason + "."));
+         var1.close();
       } else {
          boolean flag = !this.errored;
          this.errored = true;
