@@ -98,21 +98,6 @@ public final class AutoSell extends Module {
             return;
          }
          int containerSlots = Math.min(menu.getInventory().size(), Math.max(0, menu.slots.size() - 36));
-         if (!emeraldClicked) {
-            for (int i = 0; i < containerSlots; i++) {
-               if (menu.getSlot(i).getStack().isOf(Items.EMERALD)) {
-                  emeraldClicked = true;
-                  client.interactionManager.clickSlot(menu.syncId, i, 0, SlotActionType.PICKUP, client.player);
-                  return;
-               }
-            }
-         } else if (countEmeralds(client) >= 2) {
-            shopOpened = false;
-            emeraldClicked = false;
-            categoryClicked = false;
-            client.player.closeHandledScreen();
-            return;
-         }
          if (!categoryClicked) {
             for (int i = 0; i < containerSlots; i++) {
                if (menu.getSlot(i).getStack().isOf(Items.GOLD_INGOT)) {
@@ -121,6 +106,23 @@ public final class AutoSell extends Module {
                   return;
                }
             }
+            return;
+         }
+         if (!emeraldClicked) {
+            for (int i = 0; i < containerSlots; i++) {
+               if (menu.getSlot(i).getStack().isOf(Items.EMERALD)) {
+                  emeraldClicked = true;
+                  client.interactionManager.clickSlot(menu.syncId, i, 1, SlotActionType.QUICK_MOVE, client.player);
+                  return;
+               }
+            }
+         }
+         if (countEmeralds(client) >= 2) {
+            shopOpened = false;
+            emeraldClicked = false;
+            categoryClicked = false;
+            client.player.closeHandledScreen();
+            return;
          }
       }
    }

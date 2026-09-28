@@ -58,6 +58,7 @@ public final class BotAutoSell extends BotModule {
    private long lastRotateAt;
    private long rotateDelay;
    private boolean screenTouched;
+   private boolean shopCategoryOpened;
    private int craftStep;
 
    private final BotRotationPlayback playback = new BotRotationPlayback();
@@ -75,6 +76,7 @@ public final class BotAutoSell extends BotModule {
       lastRotateAt = System.currentTimeMillis();
       rotateDelay = randomRotateDelay();
       screenTouched = false;
+      shopCategoryOpened = false;
       craftStep = 0;
       playback.stop();
       debug("модуль включён; режим=изумрудный меч, цена=" + Math.round(price.getCurrent()));
@@ -143,7 +145,8 @@ public final class BotAutoSell extends BotModule {
 
    private void rotateSpawn(BotPlayer player, long now) {
       debug("стартовый разворот на 180 через библиотеку жестов HolyWorld");
-      playback.start(player, 180.0F + random(-5.0F, 5.0F), random(-2.0F, 2.0F), 900L + ThreadLocalRandom.current().nextLong(600L));
+      // 2.5–3.5 сек исключают резкий разворот в момент подключения.
+      playback.start(player, 180.0F + random(-5.0F, 5.0F), random(-2.0F, 2.0F), 2500L + ThreadLocalRandom.current().nextLong(1000L));
       enter(Phase.INSPECT, now);
    }
 
@@ -214,29 +217,33 @@ public final class BotAutoSell extends BotModule {
       if (player.currentScreenHandler == player.playerScreenHandler) {
          if (!commandCooldownOk(now)) { schedule(now); return; }
          lastCommandAt = now;
+         shopCategoryOpened = false;
          handler().sendCommand("shop");
          debug("команда shop отправлена, жду окно");
          schedule(now, 2000L);
          return;
       }
       if (!(player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
+      if (!shopCategoryOpened) {
+         for (int i = 0; i < containerSlots(menu); i++) {
+            if (menu.getSlot(i).getStack().isOf(Items.GOLD_INGOT)) {
+               click(i, 0, SlotActionType.PICKUP);
+               shopCategoryOpened = true;
+               debug("клик по категории (золотой слиток) в слоте " + i + "; жду товары");
+               schedule(now, 2500L);
+               return;
+            }
+         }
+         debug("категория изумрудов (золотой слиток) ещё не найдена");
+         schedule(now);
+         return;
+      }
       for (int i = 0; i < containerSlots(menu); i++) {
          if (menu.getSlot(i).getStack().isOf(Items.EMERALD)) {
+            // Для QUICK_MOVE кнопка 1 кодирует Shift+ПКМ, как в серверном GUI HolyWorld.
             click(i, 1, SlotActionType.QUICK_MOVE);
             debug("Shift+ПКМ по изумруду в слоте " + i + ", жду стак");
             schedule(now, 2000L);
-            if (count(Items.EMERALD) >= 2) {
-               player.closeScreen();
-               enter(Phase.CRAFT_SWORDS, now);
-            }
-            return;
-         }
-      }
-      for (int i = 0; i < containerSlots(menu); i++) {
-         if (menu.getSlot(i).getStack().isOf(Items.GOLD_INGOT)) {
-            click(i, 0, SlotActionType.PICKUP);
-            debug("клик по категории (золотой слиток) в слоте " + i);
-            schedule(now, 2500L);
             return;
          }
       }
@@ -415,6 +422,7 @@ public final class BotAutoSell extends BotModule {
 
    private void enter(Phase next, long now) {
       Phase previous = phase;
+      if (next == Phase.BUY_EMERALDS && previous != Phase.BUY_EMERALDS) shopCategoryOpened = false;
       phase = next;
       phaseStarted = now;
       nextAction = now + randomDelay();
