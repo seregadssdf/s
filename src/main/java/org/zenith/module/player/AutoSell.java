@@ -14,6 +14,7 @@ import net.minecraft.component.type.LoreComponent;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.registry.Registries;
 import net.minecraft.screen.CraftingScreenHandler;
 import net.minecraft.screen.GenericContainerScreenHandler;
 import net.minecraft.screen.slot.Slot;
@@ -45,12 +46,15 @@ public final class AutoSell extends Module {
    private long phaseStarted;
    private long lastCommandAt;
    private boolean shopCategoryOpened;
-   private int stickStep;
+   private int craftStep;
+   private int craftFails;
+   private int lastPlanks;
+   private int lastSticks;
    private int sourceSlot;
+   private int sellStep;
    private int swordStep;
    private BlockPos craftingTable;
    private boolean craftingTableClicked;
-   private boolean sellCommandSent;
    private String lastMessage;
    private long lastMessageAt;
    private int turnTotal;
@@ -76,12 +80,15 @@ public final class AutoSell extends Module {
       phaseStarted = 0L;
       lastCommandAt = 0L;
       shopCategoryOpened = false;
-      stickStep = 0;
+      craftStep = 0;
+      craftFails = 0;
+      lastPlanks = -1;
+      lastSticks = -1;
       sourceSlot = -1;
+      sellStep = 0;
       swordStep = 0;
       craftingTable = null;
       craftingTableClicked = false;
-      sellCommandSent = false;
       lastMessage = null;
       lastMessageAt = 0L;
       refreshStep = 0;
@@ -151,8 +158,8 @@ public final class AutoSell extends Module {
       int sticks = count(client, stack -> stack.isOf(Items.STICK));
       int logs = count(client, this::isLog);
       int planks = count(client, this::isPlanks);
-      if (sticks == 0 && (logs > 0 || planks >= 2)) { enter(Phase.CRAFT_STICKS, now); return; }
-      if (sticks == 0 && logs == 0 && planks == 0) { enter(Phase.BUY_LOGS, now); return; }
+      if (logs > 0 || planks >= 2) { enter(Phase.CRAFT_STICKS, now); return; }
+      if (sticks == 0) { enter(Phase.BUY_LOGS, now); return; }
       if (count(client, stack -> stack.isOf(Items.EMERALD)) < 2) { enter(Phase.BUY_EMERALDS, now); return; }
       enter(Phase.CRAFT_TABLE, now);
    }
@@ -204,36 +211,63 @@ public final class AutoSell extends Module {
 
    private void craftSticks(MinecraftClient client, long now) {
       if (client.player.currentScreenHandler != client.player.playerScreenHandler) { client.player.closeHandledScreen(); schedule(now); return; }
-      switch (stickStep) {
-         case 0 -> {
+      switch (craftStep) {
+         case 0 -> { // брёвна -> доски: весь стак в сетку, Shift по результату
             Slot log = findInventory(client, this::isLog);
-            if (log == null) { stickStep = 3; schedule(now); return; }
+            if (log == null) { craftStep = 10; lastSticks = -1; schedule(now); return; }
             sourceSlot = log.id;
             click(client, sourceSlot, 0, SlotActionType.PICKUP);
-            stickStep = 1;
+            craftStep = 1;
          }
-         case 1 -> { click(client, 1, 0, SlotActionType.PICKUP); message("бревно в сетке 2x2"); stickStep = 2; }
-         case 2 -> { click(client, 0, 0, SlotActionType.QUICK_MOVE); message("забираю доски"); stickStep = 3; }
-         case 3 -> {
-            if (count(client, this::isPlanks) < 2) { stickStep = 0; enter(Phase.INSPECT, now); return; }
+         case 1 -> { click(client, 1, 0, SlotActionType.PICKUP); craftStep = 2; }
+         case 2 -> { click(client, 0, 0, SlotActionType.QUICK_MOVE); message("перекрафчиваю брёвна в доски"); craftStep = 3; }
+         case 3 -> { click(client, 1, 0, SlotActionType.PICKUP); craftStep = 4; }
+         case 4 -> {
+            depositCursor(client);
+            int planks = count(client, this::isPlanks);
+            if (planks == lastPlanks) craftFails++; else { craftFails = 0; lastPlanks = planks; }
+            if (craftFails >= 2) { message("крафт досок не двигается (инвентарь полон?); перехожу к палкам"); craftFails = 0; craftStep = 10; lastSticks = -1; }
+            else craftStep = 0;
+         }
+         case 10 -> { // доски -> палки: стак вверх, полстака вниз, Shift по результату
+            if (count(client, this::isPlanks) < 2) { craftStep = 0; lastPlanks = -1; message("всё дерево перекрафчено в палки"); enter(Phase.INSPECT, now); return; }
             Slot planks = findInventory(client, this::isPlanks);
             sourceSlot = planks.id;
             click(client, sourceSlot, 0, SlotActionType.PICKUP);
-            stickStep = 4;
+            craftStep = 11;
          }
-         case 4 -> { click(client, 1, 1, SlotActionType.PICKUP); stickStep = 5; }
-         case 5 -> { click(client, 3, 1, SlotActionType.PICKUP); stickStep = 6; }
-         case 6 -> { click(client, sourceSlot, 0, SlotActionType.PICKUP); message("доски в сетке 2x2"); stickStep = 7; }
-         case 7 -> { click(client, 0, 0, SlotActionType.QUICK_MOVE); message("забираю палки"); stickStep = 8; }
-         default -> {
-            if (count(client, stack -> stack.isOf(Items.STICK)) > 0) { stickStep = 0; enter(Phase.INSPECT, now); return; }
-            message("крафт палок не дал результата, повторяю проверку");
-            stickStep = 0;
-            enter(Phase.INSPECT, now);
-            return;
+         case 11 -> { click(client, 1, 0, SlotActionType.PICKUP); craftStep = 12; }
+         case 12 -> { click(client, 1, 1, SlotActionType.PICKUP); craftStep = 13; }
+         case 13 -> { click(client, 3, 0, SlotActionType.PICKUP); craftStep = 14; }
+         case 14 -> { click(client, 0, 0, SlotActionType.QUICK_MOVE); message("перекрафчиваю доски в палки"); craftStep = 15; }
+         case 15 -> { click(client, 1, 0, SlotActionType.PICKUP); craftStep = 16; }
+         case 16 -> { depositCursor(client); craftStep = 17; }
+         case 17 -> { click(client, 3, 0, SlotActionType.PICKUP); craftStep = 18; }
+         case 18 -> {
+            depositCursor(client);
+            int sticks = count(client, stack -> stack.isOf(Items.STICK));
+            if (sticks == lastSticks) craftFails++; else { craftFails = 0; lastSticks = sticks; }
+            if (craftFails >= 2) { message("крафт палок не двигается (инвентарь полон?); возвращаюсь к проверке"); craftFails = 0; craftStep = 0; enter(Phase.INSPECT, now); return; }
+            craftStep = 10;
          }
+         default -> { craftStep = 0; enter(Phase.INSPECT, now); return; }
       }
       schedule(now);
+   }
+
+   /** Возвращает предмет с курсора в инвентарь: в такой же стак или в первую пустую ячейку. */
+   private void depositCursor(MinecraftClient client) {
+      ItemStack cursor = client.player.currentScreenHandler.getCursorStack();
+      if (cursor.isEmpty()) return;
+      Slot merge = null, empty = null;
+      for (Slot slot : client.player.currentScreenHandler.slots) {
+         if (slot.inventory != client.player.getInventory()) continue;
+         ItemStack stack = slot.getStack();
+         if (stack.isEmpty()) { if (empty == null) empty = slot; continue; }
+         if (merge == null && stack.getItem() == cursor.getItem() && stack.getCount() < stack.getMaxCount()) merge = slot;
+      }
+      Slot target = merge != null ? merge : empty;
+      if (target != null) click(client, target.id, 0, SlotActionType.PICKUP);
    }
 
    private void buyEmeralds(MinecraftClient client, long now) {
@@ -316,22 +350,64 @@ public final class AutoSell extends Module {
    }
 
    private void sell(MinecraftClient client, long now) {
-      if (client.player.currentScreenHandler != client.player.playerScreenHandler) { client.player.closeHandledScreen(); schedule(now); return; }
-      Slot sword = findInventory(client, this::isSword);
-      if (sword == null) { enter(Phase.REFRESH, now); return; }
-      if (!sellCommandSent) {
-         click(client, sword.id, client.player.getInventory().selectedSlot, SlotActionType.SWAP);
-         sellCommandSent = true;
-         message("меч перенесён в руку");
-         schedule(now);
-         return;
+      switch (sellStep) {
+         case 0 -> {
+            if (client.player.currentScreenHandler != client.player.playerScreenHandler) { client.player.closeHandledScreen(); schedule(now); return; }
+            Slot sword = findInventory(client, this::isSword);
+            if (sword == null) { enter(Phase.REFRESH, now); return; }
+            click(client, sword.id, client.player.getInventory().selectedSlot, SlotActionType.SWAP);
+            sellStep = 1;
+            message("меч перенесён в руку");
+            schedule(now);
+         }
+         case 1 -> {
+            if (!commandReady(now)) { schedule(now); return; }
+            client.player.networkHandler.sendChatCommand("ah sellgui " + Math.round(price.getCurrent()));
+            lastCommandAt = now;
+            sellStep = 2;
+            message("отправлена команда /ah sellgui " + Math.round(price.getCurrent()) + ", жду окно");
+            schedule(now, 2000L);
+         }
+         case 2 -> {
+            if (client.player.currentScreenHandler == client.player.playerScreenHandler) { schedule(now); return; }
+            if (!(client.player.currentScreenHandler instanceof GenericContainerScreenHandler)) { schedule(now); return; }
+            Slot sword = findInventory(client, this::isSword);
+            if (sword == null) { message("меча нет в инвентаре при открытом окне продажи"); enter(Phase.SELL_CONFIRM, now); return; }
+            click(client, sword.id, 0, SlotActionType.QUICK_MOVE);
+            message("перекладываю меч в окно продажи (Shift+ЛКМ)");
+            sellStep = 3;
+            schedule(now, 1500L);
+         }
+         case 3 -> {
+            if (client.player.currentScreenHandler == client.player.playerScreenHandler) { message("окно продажи закрылось, проверяю подтверждение"); enter(Phase.SELL_CONFIRM, now); return; }
+            Slot sword = findInventory(client, this::isSword);
+            if (sword != null) {
+               click(client, sword.id, 0, SlotActionType.PICKUP);
+               message("Shift не сработал, беру меч на курсор");
+               sellStep = 4;
+               schedule(now, 700L);
+               return;
+            }
+            message("меч в окне продажи, ищу кнопку подтверждения");
+            enter(Phase.SELL_CONFIRM, now);
+         }
+         case 4 -> {
+            if (!(client.player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { sellStep = 0; enter(Phase.INSPECT, now); return; }
+            int target = -1;
+            for (int i = 0; i < containerSlots(menu); i++) if (menu.getSlot(i).getStack().isEmpty()) { target = i; break; }
+            if (target < 0) target = 0;
+            click(client, target, 0, SlotActionType.PICKUP);
+            message("кладу меч с курсора в слот " + (target + 1) + " окна продажи");
+            sellStep = 5;
+            schedule(now, 1200L);
+         }
+         default -> {
+            if (findInventory(client, this::isSword) == null) { message("меч в окне продажи"); enter(Phase.SELL_CONFIRM, now); return; }
+            message("меч не лёг в окно продажи, возвращаюсь к проверке");
+            sellStep = 0;
+            enter(Phase.INSPECT, now);
+         }
       }
-      if (!commandReady(now)) { schedule(now); return; }
-      client.player.networkHandler.sendChatCommand("ah sellgui " + Math.round(price.getCurrent()));
-      lastCommandAt = now;
-      sellCommandSent = false;
-      message("отправлена команда /ah sellgui " + Math.round(price.getCurrent()));
-      enter(Phase.SELL_CONFIRM, now);
    }
 
    private void sellConfirm(MinecraftClient client, long now) {
@@ -375,7 +451,7 @@ public final class AutoSell extends Module {
       sourceSlot = slot.id;
       click(client, sourceSlot, 0, SlotActionType.PICKUP);
       message(text + " из слота " + sourceSlot);
-      if (phase == Phase.CRAFT_STICKS) stickStep = next; else swordStep = next;
+      swordStep = next;
    }
 
    private BlockPos findCraftingTable(MinecraftClient client) {
@@ -497,12 +573,12 @@ public final class AutoSell extends Module {
    }
 
    private boolean isLog(ItemStack stack) {
-      return stack.isOf(Items.OAK_LOG) || stack.isOf(Items.SPRUCE_LOG) || stack.isOf(Items.BIRCH_LOG) || stack.isOf(Items.JUNGLE_LOG) || stack.isOf(Items.ACACIA_LOG) || stack.isOf(Items.DARK_OAK_LOG) || stack.isOf(Items.MANGROVE_LOG) || stack.isOf(Items.CHERRY_LOG) || stack.isOf(Items.PALE_OAK_LOG) || stack.isOf(Items.CRIMSON_STEM) || stack.isOf(Items.WARPED_STEM);
+      String path = Registries.ITEM.getId(stack.getItem()).getPath();
+      return path.endsWith("_log") || path.endsWith("_wood") || path.endsWith("_stem") || path.endsWith("_hyphae");
    }
 
    private boolean isPlanks(ItemStack stack) {
-      Item item = stack.getItem();
-      return item == Items.OAK_PLANKS || item == Items.SPRUCE_PLANKS || item == Items.BIRCH_PLANKS || item == Items.JUNGLE_PLANKS || item == Items.ACACIA_PLANKS || item == Items.DARK_OAK_PLANKS || item == Items.MANGROVE_PLANKS || item == Items.CHERRY_PLANKS || item == Items.BAMBOO_PLANKS || item == Items.CRIMSON_PLANKS || item == Items.WARPED_PLANKS;
+      return Registries.ITEM.getId(stack.getItem()).getPath().endsWith("_planks");
    }
 
    private boolean isSword(ItemStack stack) {
