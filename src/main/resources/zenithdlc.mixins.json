@@ -13,6 +13,7 @@
     "entity.MixinPlayerEntity",
     "network.MixinClientConnection",
     "network.MixinPlayerInteractItemC2SPacket",
+    "network.MixinRecipeBookAddS2CPacket",
     "world.MixinAbstractBlockState",
     "world.MixinBlock",
     "world.MixinClientWorld",
