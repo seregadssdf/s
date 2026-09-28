@@ -8,8 +8,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.ItemEnchantmentsComponent;
 import net.minecraft.component.type.LoreComponent;
@@ -51,8 +49,6 @@ public final class BotAutoSell extends BotModule {
    private static final long COMMAND_COOLDOWN = 3000L;
    private static final long MAX_LOG_STACK_PRICE = 250_000L;
    private static final String SWORD_NAME = "изумрудный меч";
-   // Read the original lore lines, as the other auction modules do.
-   private static final Pattern PRICE_PATTERN = Pattern.compile("Цена\\s*[:：][^0-9]{0,16}([0-9][0-9\\s,._]*)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
    public final ModeSetting mode = new ModeSetting("module.autoSell.mode", "module.autoSell.mode.desc", "module.autoSell.emeraldSword");
    public final NumberSetting price = new NumberSetting("module.autoSell.price", 19000.0F, 0.0F, 100000.0F, 1.0F, "module.autoSell.price.desc", "$", null, null);
@@ -532,21 +528,57 @@ public final class BotAutoSell extends BotModule {
       LoreComponent lore = stack.get(DataComponentTypes.LORE);
       if (lore == null) return -1L;
       for (Text line : lore.lines()) {
-         Matcher m = PRICE_PATTERN.matcher(line.getString().replace('\u00a0', ' ').replace('\u202f', ' '));
-         if (!m.find()) continue;
-         String digits = m.group(1).replaceAll("[^0-9]", "");
-         if (digits.isEmpty()) continue;
-         try { return Long.parseLong(digits); } catch (NumberFormatException ignored) { return -1L; }
+         long parsed = priceFromText(line.getString());
+         if (parsed >= 0L) return parsed;
       }
       return -1L;
+   }
+
+   /** Parses price text despite server-specific formatting and invisible style characters. */
+   private long priceFromText(String raw) {
+      String text = normalizePriceText(raw);
+      int priceWord = text.indexOf("цена");
+      if (priceWord >= 0) {
+         long parsed = digitsAfter(text, priceWord + 4);
+         if (parsed >= 0L) return parsed;
+      }
+      int dollar = text.lastIndexOf('$');
+      return dollar < 0 ? -1L : digitsAfter(text, dollar + 1);
+   }
+
+   private long digitsAfter(String text, int start) {
+      StringBuilder digits = new StringBuilder();
+      for (int i = start; i < text.length(); i++) {
+         char c = text.charAt(i);
+         if (Character.isDigit(c)) {
+            digits.append(Character.getNumericValue(c));
+            continue;
+         }
+         if (digits.length() > 0 && (c == ',' || c == '.' || c == ' ' || c == '_' || c == '\'' || c == '\u00a0' || c == '\u202f')) continue;
+         if (digits.length() > 0) break;
+      }
+      if (digits.isEmpty()) return -1L;
+      try { return Long.parseLong(digits.toString()); } catch (NumberFormatException ignored) { return -1L; }
+   }
+
+   private String normalizePriceText(String raw) {
+      StringBuilder normalized = new StringBuilder(raw.length());
+      for (int i = 0; i < raw.length(); i++) {
+         char c = raw.charAt(i);
+         int type = Character.getType(c);
+         if (type != Character.FORMAT && type != Character.NON_SPACING_MARK && type != Character.ENCLOSING_MARK) normalized.append(c);
+      }
+      return normalized.toString().toLowerCase(Locale.ROOT);
    }
 
    private String sampleLore(ItemStack stack) {
       LoreComponent lore = stack.get(DataComponentTypes.LORE);
       if (lore == null) return "компонент lore отсутствует";
-      String lines = lore.lines().stream().map(Text::getString).filter(s -> !s.isBlank())
-         .map(s -> s.replaceAll("[\\p{Cntrl}]", "")).limit(6).reduce("", (a, b) -> a + " | " + b);
-      return lines.substring(0, Math.min(200, lines.length()));
+      List<String> lines = lore.lines().stream().map(Text::getString).filter(s -> !s.isBlank()).toList();
+      String joined = lines.stream().limit(6).reduce("", (a, b) -> a + " | " + b);
+      String priceLine = lines.stream().filter(line -> normalizePriceText(line).contains("ена")).findFirst()
+         .orElse(lines.size() > 1 ? lines.get(1) : "");
+      return joined.substring(0, Math.min(140, joined.length())) + " ‖ парс=" + priceFromText(priceLine);
    }
 
    private boolean isLog(ItemStack stack) {
@@ -657,7 +689,7 @@ public final class BotAutoSell extends BotModule {
       if (message.equals(lastDebugMessage) && now - lastDebugAt < 2000L) return;
       lastDebugMessage = message;
       lastDebugAt = now;
-      this.bot().systemMessage("AutoSell [" + phase + "]: " + message);
+      this.bot().systemMessage("AutoSell.bot.v2 [" + phase + "]: " + message);
    }
 
    private int containerSlots(GenericContainerScreenHandler menu) { return Math.min(menu.getInventory().size(), Math.max(0, menu.slots.size() - 36)); }
