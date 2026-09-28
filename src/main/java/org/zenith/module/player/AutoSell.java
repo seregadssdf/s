@@ -39,6 +39,7 @@ public final class AutoSell extends Module {
    private static final long ACTION_MAX = 1000L;
    private static final long GUI_TIMEOUT = 12000L;
    private static final long COMMAND_COOLDOWN = 3000L;
+   private static final long MAX_LOG_STACK_PRICE = 250_000L;
    // HolyWorld writes the lore as "Цена: $29,000"; formatting colors are not present in Text#getString().
    private static final Pattern PRICE_PATTERN = Pattern.compile("Цена\\s*:\\s*\\$?\\s*([\\d\\s,._]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
    public final NumberSetting price = new NumberSetting("module.autoSell.price", 19000.0F, 0.0F, 100000.0F, 1.0F, "module.autoSell.price.desc", "$", null, null);
@@ -137,7 +138,7 @@ public final class AutoSell extends Module {
       }
       if (!(client.player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
       List<Integer> logs = sortAuctionLotsByPrice(menu);
-      if (logs.size() < 2) { message("подходящих лотов >=32 с ценой в lore меньше двух, жду"); schedule(now); return; }
+      if (logs.size() < 2) { message("подходящих лотов >=32 и до 250000 за 64 меньше двух, жду"); schedule(now); return; }
       int slot = logs.get(ThreadLocalRandom.current().nextBoolean() ? 1 : Math.min(2, logs.size() - 1));
       click(client, slot, 0, SlotActionType.QUICK_MOVE);
       message("Shift+ЛКМ по " + (slot + 1) + "-му слоту списка дерева");
@@ -325,7 +326,9 @@ public final class AutoSell extends Module {
          ItemStack stack = menu.getSlot(i).getStack();
          if (stack.isEmpty() || stack.getCount() < 32) continue;
          long price = lorePrice(stack);
-         if (price > 0) prices.add(new int[]{i, (int)Math.min(price, Integer.MAX_VALUE)});
+         if (price > 0 && price * 64L <= MAX_LOG_STACK_PRICE * stack.getCount()) {
+            prices.add(new int[]{i, (int)Math.min(price, Integer.MAX_VALUE)});
+         }
       }
       prices.sort(Comparator.comparingInt(value -> value[1]));
       return prices.stream().map(value -> value[0]).toList();

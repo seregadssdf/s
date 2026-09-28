@@ -49,6 +49,7 @@ public final class BotAutoSell extends BotModule {
    private static final long ACTION_MAX = 1000L;
    private static final long GUI_TIMEOUT = 12000L;
    private static final long COMMAND_COOLDOWN = 3000L;
+   private static final long MAX_LOG_STACK_PRICE = 250_000L;
    private static final String SWORD_NAME = "изумрудный меч";
    // HolyWorld writes the lore as "Цена: $29,000"; formatting colors are not present in Text#getString().
    private static final Pattern PRICE_PATTERN = Pattern.compile("Цена\\s*:\\s*\\$?\\s*([\\d\\s,._]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
@@ -191,7 +192,7 @@ public final class BotAutoSell extends BotModule {
       if (!(player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
       List<Integer> sorted = sortAuctionLotsByPrice(menu);
       if (sorted.size() < 2) {
-         debug("подходящих лотов (>=32 предмета с ценой в lore) мало: " + sorted.size());
+         debug("подходящих лотов (>=32, до 250000 за 64) мало: " + sorted.size());
          schedule(now);
          return;
       }
@@ -509,7 +510,9 @@ public final class BotAutoSell extends BotModule {
          ItemStack stack = menu.getSlot(i).getStack();
          if (!stack.isEmpty() && stack.getCount() >= 32) {
             long p = lorePrice(stack);
-            if (p > 0L) priced.add(new int[]{i, (int) Math.min(p, Integer.MAX_VALUE)});
+            if (p > 0L && p * 64L <= MAX_LOG_STACK_PRICE * stack.getCount()) {
+               priced.add(new int[]{i, (int) Math.min(p, Integer.MAX_VALUE)});
+            }
          }
       }
       priced.sort(Comparator.comparingInt(a -> a[1]));
