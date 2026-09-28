@@ -71,6 +71,7 @@ public final class BotAutoSell extends BotModule {
    private BlockPos craftingTable;
    private boolean craftingTableTurnStarted;
    private boolean craftingTableOpenRequested;
+   private boolean sellConfirmClicked;
    private String lastDebugMessage;
    private long lastDebugAt;
 
@@ -97,6 +98,7 @@ public final class BotAutoSell extends BotModule {
       craftingTable = null;
       craftingTableTurnStarted = false;
       craftingTableOpenRequested = false;
+      sellConfirmClicked = false;
       lastDebugMessage = null;
       lastDebugAt = 0L;
       playback.stop();
@@ -430,13 +432,30 @@ public final class BotAutoSell extends BotModule {
       if (sword != null && player.currentScreenHandler == player.playerScreenHandler) {
          click(sword.id, 0, SlotActionType.PICKUP);
       }
-      if (menu.slots.size() > 15 && menu.getSlot(15).getStack().isOf(Items.LIME_DYE)) {
-         click(15, 0, SlotActionType.PICKUP);
-         debug("подтверждение продажи: лаймовый краситель в слоте 15");
-      } else {
-         debug("слот 15 не краситель; жду окно продажи");
+      if (sellConfirmClicked) {
+         debug("подтверждение уже нажато; жду ответа сервера");
+         schedule(now, 1000L);
+         return;
       }
-      schedule(now);
+      int dyeSlot = -1;
+      for (int i = 0; i < containerSlots(menu); i++) {
+         if (menu.getSlot(i).getStack().isOf(Items.LIME_DYE)) { dyeSlot = i; break; }
+      }
+      if (dyeSlot >= 0) {
+         click(dyeSlot, 0, SlotActionType.PICKUP);
+         sellConfirmClicked = true;
+         debug("подтверждение продажи: лаймовый краситель найден в слоте " + (dyeSlot + 1));
+      } else if (containerSlots(menu) >= 15) {
+         ItemStack fallback = menu.getSlot(14).getStack();
+         click(14, 0, SlotActionType.PICKUP);
+         sellConfirmClicked = true;
+         debug("лаймовый краситель не найден; один раз нажал слот 15: " + fallback.getName().getString());
+      } else {
+         debug("окно продажи содержит меньше 15 слотов, жду обновление");
+         schedule(now, 1000L);
+         return;
+      }
+      schedule(now, 1000L);
       if (findInventory(this::isSword) == null && player.currentScreenHandler == player.playerScreenHandler) enter(Phase.REFRESH, now);
    }
 
@@ -666,6 +685,7 @@ public final class BotAutoSell extends BotModule {
          craftingTableOpenRequested = false;
          swordCraftStep = 0;
       }
+      if (next == Phase.SELL_CONFIRM && previous != Phase.SELL_CONFIRM) sellConfirmClicked = false;
       phase = next;
       phaseStarted = now;
       nextAction = now + randomDelay();

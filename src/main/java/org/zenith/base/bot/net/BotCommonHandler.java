@@ -103,9 +103,9 @@ public abstract class BotCommonHandler implements ClientCommonPacketListener {
    }
 
    public void onResourcePackSend(ResourcePackSendS2CPacket packet) {
-      this.connection.send(new ResourcePackStatusC2SPacket(packet.id(), Status.ACCEPTED));
-      this.connection.send(new ResourcePackStatusC2SPacket(packet.id(), Status.DOWNLOADED));
-      this.connection.send(new ResourcePackStatusC2SPacket(packet.id(), Status.SUCCESSFULLY_LOADED));
+      LOGGER.info("Bot {} declined server resource pack {}", this.client.getName(), packet.id());
+      this.connection.send(new ResourcePackStatusC2SPacket(packet.id(), Status.DECLINED));
+      this.client.systemMessage("ресурспак сервера отклонён; бот использует ванильные текстуры");
    }
 
    public void onResourcePackRemove(ResourcePackRemoveS2CPacket packet) {
