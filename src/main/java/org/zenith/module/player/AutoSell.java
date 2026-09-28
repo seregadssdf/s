@@ -52,6 +52,7 @@ public final class AutoSell extends Module {
    private int lastSticks;
    private int sourceSlot;
    private int sellStep;
+   private int sellConfirmStep;
    private int swordStep;
    private BlockPos craftingTable;
    private boolean craftingTableClicked;
@@ -86,6 +87,7 @@ public final class AutoSell extends Module {
       lastSticks = -1;
       sourceSlot = -1;
       sellStep = 0;
+      sellConfirmStep = 0;
       swordStep = 0;
       craftingTable = null;
       craftingTableClicked = false;
@@ -353,14 +355,16 @@ public final class AutoSell extends Module {
       switch (sellStep) {
          case 0 -> {
             if (client.player.currentScreenHandler != client.player.playerScreenHandler) { client.player.closeHandledScreen(); schedule(now); return; }
+            if (isSword(client.player.getMainHandStack())) { sellStep = 1; message("меч уже в руке"); schedule(now); return; }
             Slot sword = findInventory(client, this::isSword);
-            if (sword == null) { enter(Phase.REFRESH, now); return; }
+            if (sword == null) { message("меч не распознан в инвентаре: " + inventorySwords(client)); enter(Phase.INSPECT, now); return; }
             click(client, sword.id, client.player.getInventory().selectedSlot, SlotActionType.SWAP);
             sellStep = 1;
-            message("меч перенесён в руку");
+            message("меч перенесён в руку из слота " + (sword.id + 1));
             schedule(now);
          }
          case 1 -> {
+            if (!isSword(client.player.getMainHandStack())) { sellStep = 0; message("меча нет в руке после переноса, повторяю"); schedule(now); return; }
             if (!commandReady(now)) { schedule(now); return; }
             client.player.networkHandler.sendChatCommand("ah sellgui " + Math.round(price.getCurrent()));
             lastCommandAt = now;
@@ -411,13 +415,21 @@ public final class AutoSell extends Module {
    }
 
    private void sellConfirm(MinecraftClient client, long now) {
-      if (!(client.player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
+      if (!(client.player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) {
+         sellConfirmStep++;
+         if (sellConfirmStep > 3) { message("окно продажи так и не открылось, начинаю заново"); enter(Phase.INSPECT, now); return; }
+         message("стадия подтверждения, но окна продажи нет, жду (" + sellConfirmStep + ")");
+         schedule(now, 1000L);
+         return;
+      }
+      if (sellConfirmStep == 0) { message("окно продажи: " + slotNames(menu, 0, Math.min(18, containerSlots(menu)))); sellConfirmStep = 1; schedule(now); return; }
       int target = -1;
       for (int i = 0; i < containerSlots(menu); i++) if (menu.getSlot(i).getStack().isOf(Items.LIME_DYE)) { target = i; break; }
-      if (target < 0 && menu.slots.size() > 15) target = 15;
-      if (target < 0) { message("слот подтверждения не найден, жду окно"); schedule(now); return; }
+      boolean dye = target >= 0;
+      if (!dye && containerSlots(menu) >= 15) target = 14;
+      if (target < 0) { message("в окне продажи нет ни красителя, ни 15-го слота"); schedule(now, 1000L); return; }
       click(client, target, 0, SlotActionType.PICKUP);
-      message("подтверждение продажи: слот " + (target + 1) + (menu.getSlot(target).getStack().isOf(Items.LIME_DYE) ? " (лаймовый краситель)" : " (лаймовый краситель не найден)"));
+      message("подтверждение продажи: слот " + (target + 1) + (dye ? " (лаймовый краситель)" : " (красителя нет, нажал 15-й слот: " + menu.getSlot(target).getStack().getName().getString() + ")"));
       enter(Phase.INSPECT, now);
    }
 
@@ -561,6 +573,23 @@ public final class AutoSell extends Module {
       return joined.substring(0, Math.min(120, joined.length())) + " ‖ парс=" + priceFromText(target) + " ‖ коды: " + codes;
    }
 
+   /** Диагностика isSword: какие алмазные мечи реально лежат в инвентаре. */
+   private String inventorySwords(MinecraftClient client) {
+      StringBuilder result = new StringBuilder();
+      for (Slot slot : client.player.currentScreenHandler.slots) {
+         if (slot.inventory != client.player.getInventory()) continue;
+         ItemStack stack = slot.getStack();
+         if (!stack.isOf(Items.DIAMOND_SWORD)) continue;
+         String name = stack.getName().getString();
+         StringBuilder ench = new StringBuilder();
+         ItemEnchantmentsComponent enchantments = stack.get(DataComponentTypes.ENCHANTMENTS);
+         if (enchantments != null) for (var entry : enchantments.getEnchantmentEntries()) ench.append(entry.getKey().getKey().toString()).append(':').append(entry.getIntValue()).append(' ');
+         result.append("сл").append(slot.id + 1).append(" '").append(name, 0, Math.min(30, name.length())).append("' ").append(ench).append("; ");
+         if (result.length() > 200) break;
+      }
+      return result.length() == 0 ? "алмазных мечей в инвентаре нет" : result.toString();
+   }
+
    private int count(MinecraftClient client, java.util.function.Predicate<ItemStack> test) {
       int total = 0;
       for (int i = 0; i < client.player.getInventory().size(); i++) if (test.test(client.player.getInventory().getStack(i))) total += client.player.getInventory().getStack(i).getCount();
@@ -594,7 +623,15 @@ public final class AutoSell extends Module {
    private boolean commandReady(long now) { return now - lastCommandAt >= COMMAND_COOLDOWN; }
    private void schedule(long now) { nextAction = now + ThreadLocalRandom.current().nextLong(ACTION_MIN, ACTION_MAX + 1); }
    private void schedule(long now, long extra) { nextAction = now + extra + ThreadLocalRandom.current().nextLong(ACTION_MIN, ACTION_MAX + 1); }
-   private void enter(Phase next, long now) { phase = next; phaseStarted = now; if (next == Phase.REFRESH) refreshStep = 0; schedule(now); message("переход на стадию " + next); }
+   private void enter(Phase next, long now) {
+      phase = next;
+      phaseStarted = now;
+      if (next == Phase.REFRESH) refreshStep = 0;
+      if (next == Phase.SELL) sellStep = 0;
+      if (next == Phase.SELL_CONFIRM) sellConfirmStep = 0;
+      schedule(now);
+      message("переход на стадию " + next);
+   }
 
    private void message(String text) {
       MinecraftClient client = MinecraftClient.getInstance();
