@@ -29,6 +29,9 @@ import org.zenith.event.EventTick;
 import org.zenith.module.Category;
 import org.zenith.module.Module;
 import org.zenith.module.ModuleInfo;
+import org.zenith.rotation.Rotation;
+import org.zenith.rotation.RotationEasing;
+import org.zenith.rotation.RotationTask;
 import org.zenith.setting.NumberSetting;
 
 /** Same sale pipeline as BotAutoSell, executed by the local player for testing. */
@@ -77,6 +80,7 @@ public final class AutoSell extends Module {
       sellCommandSent = false;
       lastMessage = null;
       lastMessageAt = 0L;
+      requestTurnaround();
       message("модуль включён: использую цикл AutoSell игрока");
       super.onEnable();
    }
@@ -405,5 +409,22 @@ public final class AutoSell extends Module {
       lastMessage = text;
       lastMessageAt = now;
       client.player.sendMessage(Text.literal("§eAutoSell [" + phase + "]: §f" + text), false);
+   }
+
+   /** Стартовый разворот на ~180 через менеджер ротации (как KillAura/HolyWorld). */
+   private void requestTurnaround() {
+      try {
+         MinecraftClient client = MinecraftClient.getInstance();
+         if (client.player == null) return;
+         float targetYaw = client.player.getYaw() + 180.0F + (ThreadLocalRandom.current().nextFloat() * 10.0F - 5.0F);
+         float targetPitch = ThreadLocalRandom.current().nextFloat() * 4.0F - 2.0F;
+         Rotation target = new Rotation(targetYaw, targetPitch);
+         scopedRotationManager().on23(new RotationTask(target, () -> {
+            RotationEasing easing = scopedRotationManager().int150();
+            return easing.on23(easing.HudPreviewItem(), target);
+         }, scopedRotationManager().int150().HudPreviewItem()), 20, this);
+      } catch (Exception ignored) {
+         // Ротация необязательна: цикл продолжит работу без неё.
+      }
    }
 }
