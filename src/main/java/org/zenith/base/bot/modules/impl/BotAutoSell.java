@@ -52,7 +52,7 @@ public final class BotAutoSell extends BotModule {
    private static final long MAX_LOG_STACK_PRICE = 250_000L;
    private static final String SWORD_NAME = "изумрудный меч";
    // HolyWorld writes the lore as "Цена: $29,000"; formatting colors are not present in Text#getString().
-   private static final Pattern PRICE_PATTERN = Pattern.compile("Цена\\s*:\\s*\\$?\\s*([\\d\\s,._]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+   private static final Pattern PRICE_PATTERN = Pattern.compile("Цена\\s*:\\s*[$＄]?\\s*([0-9][0-9\\s,._]*)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
    public final ModeSetting mode = new ModeSetting("module.autoSell.mode", "module.autoSell.mode.desc", "module.autoSell.emeraldSword");
    public final NumberSetting price = new NumberSetting("module.autoSell.price", 19000.0F, 0.0F, 100000.0F, 1.0F, "module.autoSell.price.desc", "$", null, null);
@@ -192,7 +192,6 @@ public final class BotAutoSell extends BotModule {
       if (!(player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
       List<Integer> sorted = sortAuctionLotsByPrice(menu);
       if (sorted.size() < 2) {
-         debug("подходящих лотов (>=32, до 250000 за 64) мало: " + sorted.size());
          schedule(now);
          return;
       }
@@ -506,15 +505,20 @@ public final class BotAutoSell extends BotModule {
    private List<Integer> sortAuctionLotsByPrice(GenericContainerScreenHandler menu) {
       List<int[]> priced = new ArrayList<>();
       int lotSlots = Math.max(0, containerSlots(menu) - 9);
+      int enough = 0, withPrice = 0, affordable = 0;
       for (int i = 0; i < lotSlots; i++) {
          ItemStack stack = menu.getSlot(i).getStack();
          if (!stack.isEmpty() && stack.getCount() >= 32) {
+            enough++;
             long p = lorePrice(stack);
+            if (p > 0L) withPrice++;
             if (p > 0L && p * 64L <= MAX_LOG_STACK_PRICE * stack.getCount()) {
+               affordable++;
                priced.add(new int[]{i, (int) Math.min(p, Integer.MAX_VALUE)});
             }
          }
       }
+      debug("аукцион: слотов=" + containerSlots(menu) + ", лотов 32+=" + enough + ", с ценой=" + withPrice + ", до лимита=" + affordable);
       priced.sort(Comparator.comparingInt(a -> a[1]));
       List<Integer> out = new ArrayList<>();
       for (int[] e : priced) out.add(e[0]);
@@ -524,12 +528,14 @@ public final class BotAutoSell extends BotModule {
    private long lorePrice(ItemStack stack) {
       LoreComponent lore = stack.get(DataComponentTypes.LORE);
       if (lore == null) return -1L;
-      String joined = lore.styledLines().stream().map(Text::getString).reduce("", (a, b) -> a + " " + b);
-      Matcher m = PRICE_PATTERN.matcher(joined);
-      if (!m.find()) return -1L;
-      String digits = m.group(1).replaceAll("[^\\d]", "");
-      if (digits.isEmpty()) return -1L;
-      try { return Long.parseLong(digits); } catch (NumberFormatException e) { return -1L; }
+      for (Text line : lore.styledLines()) {
+         Matcher m = PRICE_PATTERN.matcher(line.getString().replace('\u00a0', ' ').replace('\u202f', ' '));
+         if (!m.find()) continue;
+         String digits = m.group(1).replaceAll("[^0-9]", "");
+         if (digits.isEmpty()) continue;
+         try { return Long.parseLong(digits); } catch (NumberFormatException ignored) { return -1L; }
+      }
+      return -1L;
    }
 
    private boolean isLog(ItemStack stack) {
