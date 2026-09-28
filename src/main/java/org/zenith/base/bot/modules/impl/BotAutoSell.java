@@ -72,6 +72,9 @@ public final class BotAutoSell extends BotModule {
    private boolean craftingTableTurnStarted;
    private boolean craftingTableOpenRequested;
    private boolean sellConfirmClicked;
+   private int sellConfirmAttempts;
+   private int sellConfirmTargetSlot = -1;
+   private long sellConfirmLastClickAt;
    private String lastDebugMessage;
    private long lastDebugAt;
 
@@ -99,6 +102,9 @@ public final class BotAutoSell extends BotModule {
       craftingTableTurnStarted = false;
       craftingTableOpenRequested = false;
       sellConfirmClicked = false;
+      sellConfirmAttempts = 0;
+      sellConfirmTargetSlot = -1;
+      sellConfirmLastClickAt = 0L;
       lastDebugMessage = null;
       lastDebugAt = 0L;
       playback.stop();
@@ -417,6 +423,12 @@ public final class BotAutoSell extends BotModule {
       if (sword == null) { enter(Phase.REFRESH, now); return; }
       if (player.currentScreenHandler != player.playerScreenHandler) { player.closeScreen(); schedule(now); return; }
       selectSlot(player, sword);
+      interaction().syncSelectedSlot();
+      if (!isSword(player.getMainHandStack())) {
+         debug("меч выбран, жду подтверждения слота в руке");
+         schedule(now);
+         return;
+      }
       if (!commandCooldownOk(now)) { schedule(now); return; }
       lastCommandAt = now;
       handler().sendCommand("ah sellgui " + Math.round(price.getCurrent()));
@@ -427,14 +439,46 @@ public final class BotAutoSell extends BotModule {
    // Подтверждение: слот 15 по индексу, предмет — лаймовый краситель.
    private void sellConfirm(long now) {
       BotPlayer player = bot().getPlayer();
-      if (!(player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
       Slot sword = findInventory(this::isSword);
-      if (sword != null && player.currentScreenHandler == player.playerScreenHandler) {
-         click(sword.id, 0, SlotActionType.PICKUP);
+      if (player.currentScreenHandler == player.playerScreenHandler) {
+         if (sellConfirmClicked && sword == null) {
+            debug("сервер закрыл окно и забрал меч: продажа принята");
+            enter(Phase.REFRESH, now);
+         } else if (sellConfirmClicked) {
+            debug("окно закрылось, меч остался; повторяю выставление");
+            sellConfirmClicked = false;
+            enter(Phase.SELL, now);
+         } else {
+            schedule(now);
+         }
+         return;
       }
+      if (!(player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
       if (sellConfirmClicked) {
-         debug("подтверждение уже нажато; жду ответа сервера");
-         schedule(now, 1000L);
+         if (sword == null) {
+            debug("сервер убрал меч из инвентаря; закрываю окно и обновляю лоты");
+            player.closeScreen();
+            enter(Phase.REFRESH, now);
+            return;
+         }
+         if (now - sellConfirmLastClickAt < 1800L) { schedule(now, 500L); return; }
+         if (sellConfirmAttempts >= 3) {
+            debug("3 подтверждения не сработали; закрываю окно и заново открываю sellgui");
+            player.closeScreen();
+            sellConfirmClicked = false;
+            enter(Phase.SELL, now);
+            return;
+         }
+         if (sellConfirmTargetSlot < 0 || sellConfirmTargetSlot >= containerSlots(menu)) {
+            debug("слот подтверждения исчез из окна, жду сервер");
+            schedule(now, 1000L);
+            return;
+         }
+         click(sellConfirmTargetSlot, 0, SlotActionType.PICKUP);
+         sellConfirmAttempts++;
+         sellConfirmLastClickAt = now;
+         debug("повтор подтверждения продажи " + sellConfirmAttempts + "/3 по слоту " + (sellConfirmTargetSlot + 1));
+         schedule(now, 1500L);
          return;
       }
       int dyeSlot = -1;
@@ -442,21 +486,23 @@ public final class BotAutoSell extends BotModule {
          if (menu.getSlot(i).getStack().isOf(Items.LIME_DYE)) { dyeSlot = i; break; }
       }
       if (dyeSlot >= 0) {
-         click(dyeSlot, 0, SlotActionType.PICKUP);
-         sellConfirmClicked = true;
-         debug("подтверждение продажи: лаймовый краситель найден в слоте " + (dyeSlot + 1));
+         sellConfirmTargetSlot = dyeSlot;
       } else if (containerSlots(menu) >= 15) {
          ItemStack fallback = menu.getSlot(14).getStack();
-         click(14, 0, SlotActionType.PICKUP);
-         sellConfirmClicked = true;
-         debug("лаймовый краситель не найден; один раз нажал слот 15: " + fallback.getName().getString());
+         sellConfirmTargetSlot = 14;
+         debug("лаймовый краситель не найден; использую указанный 15-й слот: " + fallback.getName().getString());
       } else {
          debug("окно продажи содержит меньше 15 слотов, жду обновление");
          schedule(now, 1000L);
          return;
       }
-      schedule(now, 1000L);
-      if (findInventory(this::isSword) == null && player.currentScreenHandler == player.playerScreenHandler) enter(Phase.REFRESH, now);
+      click(sellConfirmTargetSlot, 0, SlotActionType.PICKUP);
+      sellConfirmClicked = true;
+      sellConfirmAttempts = 1;
+      sellConfirmLastClickAt = now;
+      debug("подтверждение продажи " + (dyeSlot >= 0 ? "лаймовым красителем" : "15-м слотом")
+         + "; попытка 1/3, слот " + (sellConfirmTargetSlot + 1));
+      schedule(now, 1500L);
    }
 
    // /ah -> слот 47 по счёту (индекс 46) -> предпоследний слот дабл-сундука.
@@ -685,7 +731,12 @@ public final class BotAutoSell extends BotModule {
          craftingTableOpenRequested = false;
          swordCraftStep = 0;
       }
-      if (next == Phase.SELL_CONFIRM && previous != Phase.SELL_CONFIRM) sellConfirmClicked = false;
+      if (next == Phase.SELL_CONFIRM && previous != Phase.SELL_CONFIRM) {
+         sellConfirmClicked = false;
+         sellConfirmAttempts = 0;
+         sellConfirmTargetSlot = -1;
+         sellConfirmLastClickAt = 0L;
+      }
       phase = next;
       phaseStarted = now;
       nextAction = now + randomDelay();
