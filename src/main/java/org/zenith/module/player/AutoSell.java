@@ -63,6 +63,7 @@ public final class AutoSell extends Module {
    private float swayYawLeft;
    private float swayPitchLeft;
    private int refreshStep;
+   private int confirmStep;
 
    private enum Phase {
       TURN, INSPECT, BUY_LOGS, BUY_LOGS_CONFIRM, CRAFT_STICKS, BUY_EMERALDS, CRAFT_TABLE, CRAFT_SWORDS, SELL, SELL_CONFIRM, REFRESH, RECOVER
@@ -84,6 +85,7 @@ public final class AutoSell extends Module {
       lastMessage = null;
       lastMessageAt = 0L;
       refreshStep = 0;
+      confirmStep = 0;
       swayYawLeft = 0.0F;
       swayPitchLeft = 0.0F;
       nextSwayAt = System.currentTimeMillis() + ThreadLocalRandom.current().nextLong(2000L, 10001L);
@@ -138,15 +140,25 @@ public final class AutoSell extends Module {
    }
 
    private void inspect(MinecraftClient client, long now) {
-      message("осмотр: мечи=" + count(client, this::isSword) + ", изумруды=" + count(client, stack -> stack.isOf(Items.EMERALD)) + ", палки=" + count(client, stack -> stack.isOf(Items.STICK)));
-      if (findInventory(client, this::isSword) != null) enter(Phase.SELL, now);
-      else if (count(client, stack -> stack.isOf(Items.STICK)) == 0 && (count(client, this::isLog) > 0 || count(client, this::isPlanks) > 0)) enter(Phase.CRAFT_STICKS, now);
-      else if (count(client, stack -> stack.isOf(Items.STICK)) == 0 && count(client, this::isLog) == 0) enter(Phase.BUY_LOGS, now);
-      else if (count(client, stack -> stack.isOf(Items.EMERALD)) < 2) enter(Phase.BUY_EMERALDS, now);
-      else enter(Phase.CRAFT_TABLE, now);
+      message("осмотр: мечи=" + count(client, this::isSword) + ", изумруды=" + count(client, stack -> stack.isOf(Items.EMERALD))
+         + ", брёвна=" + count(client, this::isLog) + ", доски=" + count(client, this::isPlanks)
+         + ", палки=" + count(client, stack -> stack.isOf(Items.STICK)));
+      route(client, now);
+   }
+
+   private void route(MinecraftClient client, long now) {
+      if (findInventory(client, this::isSword) != null) { enter(Phase.SELL, now); return; }
+      int sticks = count(client, stack -> stack.isOf(Items.STICK));
+      int logs = count(client, this::isLog);
+      int planks = count(client, this::isPlanks);
+      if (sticks == 0 && (logs > 0 || planks >= 2)) { enter(Phase.CRAFT_STICKS, now); return; }
+      if (sticks == 0 && logs == 0 && planks == 0) { enter(Phase.BUY_LOGS, now); return; }
+      if (count(client, stack -> stack.isOf(Items.EMERALD)) < 2) { enter(Phase.BUY_EMERALDS, now); return; }
+      enter(Phase.CRAFT_TABLE, now);
    }
 
    private void buyLogs(MinecraftClient client, long now) {
+      if (count(client, this::isLog) > 0 || count(client, this::isPlanks) >= 2) { enter(Phase.CRAFT_STICKS, now); return; }
       if (client.player.currentScreenHandler == client.player.playerScreenHandler) {
          if (!commandReady(now)) { schedule(now); return; }
          client.player.networkHandler.sendChatCommand("ah search дерево");
@@ -161,23 +173,54 @@ public final class AutoSell extends Module {
       int slot = logs.get(ThreadLocalRandom.current().nextBoolean() ? 1 : Math.min(2, logs.size() - 1));
       click(client, slot, 0, SlotActionType.QUICK_MOVE);
       message("Shift+ЛКМ по " + (slot + 1) + "-му слоту списка дерева");
+      confirmStep = 0;
       enter(Phase.BUY_LOGS_CONFIRM, now);
    }
 
    private void buyLogsConfirm(MinecraftClient client, long now) {
-      if (!(client.player.currentScreenHandler instanceof GenericContainerScreenHandler)) { schedule(now); return; }
-      click(client, 1, 0, SlotActionType.PICKUP);
-      message("подтверждение покупки дерева: слот 1");
-      if (count(client, this::isLog) > 0) { client.player.closeHandledScreen(); enter(Phase.CRAFT_STICKS, now); } else schedule(now, 1200L);
+      if (!(client.player.currentScreenHandler instanceof GenericContainerScreenHandler menu)) { schedule(now); return; }
+      if (count(client, this::isLog) > 0 || count(client, this::isPlanks) > 0) { client.player.closeHandledScreen(); enter(Phase.CRAFT_STICKS, now); return; }
+      switch (confirmStep) {
+         case 0 -> {
+            message("меню подтверждения, слоты 1-3: " + slotNames(menu, 0, 3));
+            click(client, 0, 0, SlotActionType.PICKUP);
+            message("клик по 1-му слоту меню подтверждения");
+            confirmStep = 1;
+            schedule(now, 1200L);
+         }
+         case 1 -> {
+            click(client, 1, 0, SlotActionType.PICKUP);
+            message("лот не купился, пробую 2-й слот");
+            confirmStep = 2;
+            schedule(now, 1200L);
+         }
+         default -> {
+            message("покупка не подтвердилась, начинаю заново");
+            client.player.closeHandledScreen();
+            enter(Phase.INSPECT, now);
+         }
+      }
    }
 
    private void craftSticks(MinecraftClient client, long now) {
       if (client.player.currentScreenHandler != client.player.playerScreenHandler) { client.player.closeHandledScreen(); schedule(now); return; }
       switch (stickStep) {
-         case 0 -> pickFromInventory(client, this::isLog, "взято бревно для досок", 1);
+         case 0 -> {
+            Slot log = findInventory(client, this::isLog);
+            if (log == null) { stickStep = 3; schedule(now); return; }
+            sourceSlot = log.id;
+            click(client, sourceSlot, 0, SlotActionType.PICKUP);
+            stickStep = 1;
+         }
          case 1 -> { click(client, 1, 0, SlotActionType.PICKUP); message("бревно в сетке 2x2"); stickStep = 2; }
          case 2 -> { click(client, 0, 0, SlotActionType.QUICK_MOVE); message("забираю доски"); stickStep = 3; }
-         case 3 -> pickFromInventory(client, this::isPlanks, "взяты доски для палок", 4);
+         case 3 -> {
+            if (count(client, this::isPlanks) < 2) { stickStep = 0; enter(Phase.INSPECT, now); return; }
+            Slot planks = findInventory(client, this::isPlanks);
+            sourceSlot = planks.id;
+            click(client, sourceSlot, 0, SlotActionType.PICKUP);
+            stickStep = 4;
+         }
          case 4 -> { click(client, 1, 1, SlotActionType.PICKUP); stickStep = 5; }
          case 5 -> { click(client, 3, 1, SlotActionType.PICKUP); stickStep = 6; }
          case 6 -> { click(client, sourceSlot, 0, SlotActionType.PICKUP); message("доски в сетке 2x2"); stickStep = 7; }
@@ -219,8 +262,8 @@ public final class AutoSell extends Module {
          return;
       }
       for (int i = 0; i < size; i++) if (menu.getSlot(i).getStack().isOf(Items.EMERALD)) {
-         click(client, i, 0, SlotActionType.QUICK_MOVE);
-         message("Shift+ЛКМ по изумруду, жду покупку стака");
+         click(client, i, 1, SlotActionType.QUICK_MOVE);
+         message("Shift+ПКМ по изумруду, жду покупку стака");
          schedule(now, 2000L);
          return;
       }
@@ -371,6 +414,17 @@ public final class AutoSell extends Module {
       return prices.stream().map(value -> value[0]).toList();
    }
 
+   private String slotNames(GenericContainerScreenHandler menu, int from, int to) {
+      StringBuilder names = new StringBuilder();
+      for (int i = from; i < Math.min(to, containerSlots(menu)); i++) {
+         ItemStack stack = menu.getSlot(i).getStack();
+         if (stack.isEmpty()) continue;
+         String label = stack.getName().getString();
+         names.append(i + 1).append("='").append(label, 0, Math.min(20, label.length())).append("' ");
+      }
+      return names.length() == 0 ? "пусто" : names.toString();
+   }
+
    private long lorePrice(ItemStack stack) {
       LoreComponent lore = stack.get(DataComponentTypes.LORE);
       if (lore == null) return -1;
@@ -381,13 +435,21 @@ public final class AutoSell extends Module {
       return -1;
    }
 
-   /** Сканируем после слова «Цена» до первой цифры: оформление вокруг цены нестандартное. */
+   /** Сначала цифры после слова «цена», затем запасной вариант — после последнего «$». */
    private long priceFromText(String raw) {
       String text = normalize(raw);
       int at = text.indexOf("цена");
-      if (at < 0) return -1;
+      if (at >= 0) {
+         long price = digitsAfter(text, at + 4);
+         if (price >= 0) return price;
+      }
+      int dollar = text.lastIndexOf('$');
+      return dollar < 0 ? -1 : digitsAfter(text, dollar + 1);
+   }
+
+   private long digitsAfter(String text, int from) {
       StringBuilder digits = new StringBuilder();
-      for (int i = at + 4; i < text.length(); i++) {
+      for (int i = from; i < text.length(); i++) {
          char c = text.charAt(i);
          if (Character.isDigit(c)) { digits.append(Character.getNumericValue(c)); continue; }
          boolean separator = digits.length() > 0
@@ -420,7 +482,7 @@ public final class AutoSell extends Module {
          .orElse(lines.size() > 1 ? lines.get(1) : "");
       StringBuilder codes = new StringBuilder();
       for (int i = 0; i < target.length() && codes.length() < 280; i++) codes.append(String.format("U+%04X ", (int)target.charAt(i)));
-      return joined.substring(0, Math.min(160, joined.length())) + " ‖ коды строки цены: " + codes;
+      return joined.substring(0, Math.min(120, joined.length())) + " ‖ парс=" + priceFromText(target) + " ‖ коды: " + codes;
    }
 
    private int count(MinecraftClient client, java.util.function.Predicate<ItemStack> test) {
@@ -465,7 +527,7 @@ public final class AutoSell extends Module {
       if (text.equals(lastMessage) && now - lastMessageAt < 1800L) return;
       lastMessage = text;
       lastMessageAt = now;
-      client.player.sendMessage(Text.literal("§eAutoSell [" + phase + "]: §f" + text), false);
+      client.player.sendMessage(Text.literal("§eAutoSell.v3 [" + phase + "]: §f" + text), false);
    }
 
    /** Разворот камеры на ~180 при включении: прямое плавное ведение, видно игроку и серверу. */
