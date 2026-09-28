@@ -174,6 +174,7 @@ public final class ModuleManager implements ClientProvider {
       this.on23(AutoLoot.autoLoot);
       this.on23(AutoMine.autoMine);
       this.on23(AutoSell.autoSell);
+      this.on23(Wander.wander);
       this.on23(CropFarmer.cropFarmer);
       this.on23(AutoZamok.autoZamok);
       this.on23(AutoBrewing.autoBrewing);
