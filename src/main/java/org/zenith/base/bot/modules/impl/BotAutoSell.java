@@ -50,7 +50,8 @@ public final class BotAutoSell extends BotModule {
    private static final long GUI_TIMEOUT = 12000L;
    private static final long COMMAND_COOLDOWN = 3000L;
    private static final String SWORD_NAME = "изумрудный меч";
-   private static final Pattern PRICE_PATTERN = Pattern.compile("\\$\\s*Цена:\\s*\\$([\\d\\s,._]+)");
+   // HolyWorld writes the lore as "Цена: $29,000"; formatting colors are not present in Text#getString().
+   private static final Pattern PRICE_PATTERN = Pattern.compile("Цена\\s*:\\s*\\$?\\s*([\\d\\s,._]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
    public final ModeSetting mode = new ModeSetting("module.autoSell.mode", "module.autoSell.mode.desc", "module.autoSell.emeraldSword");
    public final NumberSetting price = new NumberSetting("module.autoSell.price", 19000.0F, 0.0F, 100000.0F, 1.0F, "module.autoSell.price.desc", "$", null, null);

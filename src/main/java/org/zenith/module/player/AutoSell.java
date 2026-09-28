@@ -39,7 +39,8 @@ public final class AutoSell extends Module {
    private static final long ACTION_MAX = 1000L;
    private static final long GUI_TIMEOUT = 12000L;
    private static final long COMMAND_COOLDOWN = 3000L;
-   private static final Pattern PRICE_PATTERN = Pattern.compile("\\$\\s*Цена:\\s*\\$([\\d\\s,._]+)");
+   // HolyWorld writes the lore as "Цена: $29,000"; formatting colors are not present in Text#getString().
+   private static final Pattern PRICE_PATTERN = Pattern.compile("Цена\\s*:\\s*\\$?\\s*([\\d\\s,._]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
    public final NumberSetting price = new NumberSetting("module.autoSell.price", 19000.0F, 0.0F, 100000.0F, 1.0F, "module.autoSell.price.desc", "$", null, null);
 
    private Phase phase;
