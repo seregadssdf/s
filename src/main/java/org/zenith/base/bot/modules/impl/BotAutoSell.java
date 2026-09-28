@@ -21,6 +21,7 @@ import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
@@ -365,22 +366,31 @@ public final class BotAutoSell extends BotModule {
          debug("верстак найден: " + craftingTable.toShortString());
       }
       if (!craftingTableTurnStarted) {
-         rotateTo(player, craftingTable.toCenterPos(), 800L);
+         rotateTo(player, craftingTable.toCenterPos(), 900L);
          craftingTableTurnStarted = true;
          debug("верстак: плавно поворачиваюсь к " + craftingTable.toShortString());
          return;
       }
+      HitResult trace = player.raycast(player.getBlockInteractionRange(), 1.0F, false);
+      if (!(trace instanceof BlockHitResult hit) || !hit.getBlockPos().equals(craftingTable)) {
+         craftingTableTurnStarted = false;
+         craftingTableOpenRequested = false;
+         String hitDescription = trace instanceof BlockHitResult blockHit
+            ? blockHit.getBlockPos().toShortString() : trace.getType().toString();
+         debug("верстак: прицел ещё не на цели (raycast=" + hitDescription + "); довернул, клика нет");
+         schedule(now);
+         return;
+      }
       if (!craftingTableOpenRequested) {
-         BlockHitResult hit = new BlockHitResult(craftingTable.toCenterPos(), Direction.UP, craftingTable, false);
          interaction().interactBlock(player, Hand.MAIN_HAND, hit);
          craftingTableOpenRequested = true;
-         debug("верстак: нажимаю ПКМ, жду окно крафта 3x3");
+         debug("верстак: raycast попал в цель со стороны " + hit.getSide() + "; отправил ПКМ");
          schedule(now, 1500L);
          return;
       }
-      debug("верстак: окно 3x3 ещё не открылось, пробую снова");
-      craftingTableOpenRequested = false;
-      schedule(now);
+      debug("верстак: raycast всё ещё на цели, окно 3x3 не пришло; повторяю ПКМ по hit-result");
+      interaction().interactBlock(player, Hand.MAIN_HAND, hit);
+      schedule(now, 1500L);
    }
 
    // Кастомный крафт: как алмазный меч, но изумруды — 2 сверху + палка снизу в центральной колонке.
@@ -781,13 +791,13 @@ public final class BotAutoSell extends BotModule {
    }
 
    private void rotateTo(BotPlayer player, Vec3d target, long durationMs) {
-      Vec3d eye = player.getCameraPosVec(1.0F);
+      Vec3d eye = player.getEyePos();
       double x = target.x - eye.x;
       double y = target.y - eye.y;
       double z = target.z - eye.z;
       float yaw = (float)(Math.toDegrees(Math.atan2(z, x)) - 90.0);
       float pitch = (float)-Math.toDegrees(Math.atan2(y, Math.sqrt(x * x + z * z)));
-      playback.start(player, MathHelper.wrapDegrees(yaw - player.getYaw()), MathHelper.clamp(pitch - player.getPitch(), -30.0F, 30.0F), durationMs);
+      playback.start(player, MathHelper.wrapDegrees(yaw - player.getYaw()), pitch - player.getPitch(), durationMs);
    }
 
    private void selectSlot(BotPlayer player, Slot sword) {
