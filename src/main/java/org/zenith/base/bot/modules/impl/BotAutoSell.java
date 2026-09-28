@@ -293,8 +293,18 @@ public final class BotAutoSell extends BotModule {
 
    // /shop -> клик по золотому слитку (категория) -> Shift+ПКМ по изумруду (стак).
    private void buyEmeralds(long now) {
-      if (count(Items.EMERALD) >= 2 && count(Items.STICK) > 0) { enter(Phase.CRAFT_TABLE, now); return; }
       BotPlayer player = bot().getPlayer();
+      int emeralds = count(Items.EMERALD);
+      if (emeralds >= 2) {
+         if (player.currentScreenHandler != player.playerScreenHandler) {
+            debug("изумрудов уже достаточно (" + emeralds + "); закрываю магазин без повторной покупки");
+            player.closeScreen();
+         } else {
+            debug("изумрудов уже достаточно (" + emeralds + "); возвращаюсь к проверке дерева и палок");
+         }
+         enter(Phase.INSPECT, now);
+         return;
+      }
       if (player.currentScreenHandler == player.playerScreenHandler) {
          if (!commandCooldownOk(now)) { schedule(now); return; }
          lastCommandAt = now;
