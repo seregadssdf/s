@@ -40,7 +40,7 @@ public final class AutoSell extends Module {
    private static final long GUI_TIMEOUT = 12000L;
    private static final long COMMAND_COOLDOWN = 3000L;
    private static final long MAX_LOG_STACK_PRICE = 250_000L;
-   // HolyWorld writes the lore as "Цена: $29,000"; formatting colors are not present in Text#getString().
+   // Read the original lore lines, as the other auction modules do.
    private static final Pattern PRICE_PATTERN = Pattern.compile("Цена\\s*:\\s*[$＄]?\\s*([0-9][0-9\\s,._]*)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
    public final NumberSetting price = new NumberSetting("module.autoSell.price", 19000.0F, 0.0F, 100000.0F, 1.0F, "module.autoSell.price.desc", "$", null, null);
 
@@ -323,11 +323,13 @@ public final class AutoSell extends Module {
       // Последняя строка из 9 слотов — серверные кнопки /ah, это не лоты.
       int lotSlots = Math.max(0, containerSlots(menu) - 9);
       int enough = 0, withPrice = 0, affordable = 0;
+      ItemStack sample = ItemStack.EMPTY;
       for (int i = 0; i < lotSlots; i++) {
          ItemStack stack = menu.getSlot(i).getStack();
          if (stack.isEmpty() || stack.getCount() < 32) continue;
          enough++;
          long price = lorePrice(stack);
+         if (price < 0 && sample.isEmpty()) sample = stack;
          if (price > 0) withPrice++;
          if (price > 0 && price * 64L <= MAX_LOG_STACK_PRICE * stack.getCount()) {
             affordable++;
@@ -335,6 +337,7 @@ public final class AutoSell extends Module {
          }
       }
       message("аукцион: слотов=" + containerSlots(menu) + ", лотов 32+=" + enough + ", с ценой=" + withPrice + ", до лимита=" + affordable);
+      if (withPrice == 0 && !sample.isEmpty()) message("пример lore лота: " + sampleLore(sample));
       prices.sort(Comparator.comparingInt(value -> value[1]));
       return prices.stream().map(value -> value[0]).toList();
    }
@@ -342,13 +345,21 @@ public final class AutoSell extends Module {
    private long lorePrice(ItemStack stack) {
       LoreComponent lore = stack.get(DataComponentTypes.LORE);
       if (lore == null) return -1;
-      for (Text line : lore.styledLines()) {
+      for (Text line : lore.lines()) {
          Matcher matcher = PRICE_PATTERN.matcher(line.getString().replace('\u00a0', ' ').replace('\u202f', ' '));
          if (!matcher.find()) continue;
          String digits = matcher.group(1).replaceAll("[^0-9]", "");
          try { return digits.isEmpty() ? -1 : Long.parseLong(digits); } catch (NumberFormatException ignored) { return -1; }
       }
       return -1;
+   }
+
+   private String sampleLore(ItemStack stack) {
+      LoreComponent lore = stack.get(DataComponentTypes.LORE);
+      if (lore == null) return "компонент lore отсутствует";
+      String lines = lore.lines().stream().map(Text::getString).filter(s -> !s.isBlank())
+         .map(s -> s.replaceAll("[\\p{Cntrl}]", "")).limit(6).reduce("", (a, b) -> a + " | " + b);
+      return lines.substring(0, Math.min(200, lines.length()));
    }
 
    private int count(MinecraftClient client, java.util.function.Predicate<ItemStack> test) {
