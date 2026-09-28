@@ -18,6 +18,7 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.codec.DecoderException;
 import io.netty.handler.flow.FlowControlHandler;
 import io.netty.handler.proxy.ProxyHandler;
 import io.netty.handler.timeout.ReadTimeoutHandler;
@@ -189,6 +190,9 @@ public final class BotConnection extends SimpleChannelInboundHandler<Packet<?>> 
    public void exceptionCaught(ChannelHandlerContext var1, Throwable var2) {
       if (var2 instanceof PacketEncoderException) {
          LOGGER.debug("Skipping packet due to errors", var2.getCause());
+      } else if (var2 instanceof DecoderException) {
+         // Length-prefixed frames stay in sync, so one undecodable packet (e.g. custom recipe_book_add) is skipped, bot stays online.
+         LOGGER.warn("Bot: skipping undecodable packet ({}), connection kept alive", var2.getMessage());
       } else {
          boolean flag = !this.errored;
          this.errored = true;
