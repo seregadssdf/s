@@ -192,7 +192,7 @@ public final class BotConnection extends SimpleChannelInboundHandler<Packet<?>> 
          LOGGER.debug("Skipping packet due to errors", var2.getCause());
       } else if (var2 instanceof DecoderException) {
          // Length-prefixed frames stay in sync, so one undecodable packet (e.g. custom recipe_book_add) is skipped, bot stays online.
-         LOGGER.warn("Bot: skipping undecodable packet ({}), connection kept alive", var2.getMessage());
+         LOGGER.warn("Bot: skipping undecodable packet ({} / {}), connection kept alive", var2.getMessage(), var2.getCause());
       } else {
          boolean flag = !this.errored;
          this.errored = true;

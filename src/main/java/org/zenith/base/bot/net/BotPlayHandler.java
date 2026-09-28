@@ -1239,10 +1239,20 @@ public final class BotPlayHandler extends BotCommonHandler implements ClientPlay
       NetworkThreadUtils.forceMainThread(packet, this, this.client.getPacketApplyBatcher());
       BotPlayer botplayer = this.player;
       if (botplayer != null) {
-         ScreenHandler screenhandler = packet.getScreenHandlerType().create(packet.getSyncId(), botplayer.getInventory());
-         botplayer.currentScreenHandler = screenhandler;
-         this.currentScreenTitle = packet.getName();
-         this.currentScreenSyncId = packet.getSyncId();
+         try {
+            ScreenHandler screenhandler = packet.getScreenHandlerType().create(packet.getSyncId(), botplayer.getInventory());
+            botplayer.currentScreenHandler = screenhandler;
+            this.currentScreenTitle = packet.getName();
+            this.currentScreenSyncId = packet.getSyncId();
+            String message = "окно открыто: тип=" + packet.getScreenHandlerType() + ", syncId=" + packet.getSyncId()
+               + ", заголовок=" + packet.getName().getString();
+            LOGGER.info("Bot {}: {}", this.client.getName(), message);
+            this.client.systemMessage(message);
+         } catch (Exception exception) {
+            String message = "не смог открыть окно: тип=" + packet.getScreenHandlerType() + ", ошибка=" + exception;
+            LOGGER.warn("Bot {}: {}", this.client.getName(), message, exception);
+            this.client.systemMessage(message);
+         }
       }
    }
 

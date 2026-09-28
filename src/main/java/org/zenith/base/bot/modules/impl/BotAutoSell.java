@@ -185,7 +185,7 @@ public final class BotAutoSell extends BotModule {
          if (!commandCooldownOk(now)) { schedule(now); return; }
          lastCommandAt = now;
          handler().sendCommand("ah search дерево");
-         debug("ah search дерево отправлен, жду окно");
+         debug("ah search дерево отправлен, жду окно; вижу: " + windowState(player));
          schedule(now, 2000L);
          return;
       }
@@ -292,7 +292,7 @@ public final class BotAutoSell extends BotModule {
          lastCommandAt = now;
          shopCategoryOpened = false;
          handler().sendCommand("shop");
-         debug("команда shop отправлена, жду окно");
+         debug("команда shop отправлена, жду окно; вижу: " + windowState(player));
          schedule(now, 2000L);
          return;
       }
@@ -422,7 +422,7 @@ public final class BotAutoSell extends BotModule {
       if (!commandCooldownOk(now)) { schedule(now); return; }
       lastCommandAt = now;
       handler().sendCommand("ah sellgui " + Math.round(price.getCurrent()));
-      debug("меч в руке; sellgui открыт, жду окно");
+      debug("меч в руке; sellgui открыт, жду окно; вижу: " + windowState(bot().getPlayer()));
       enter(Phase.SELL_CONFIRM, now);
    }
 
@@ -451,7 +451,7 @@ public final class BotAutoSell extends BotModule {
          if (!commandCooldownOk(now)) { schedule(now); return; }
          lastCommandAt = now;
          handler().sendCommand("ah");
-         debug("команда ah отправлена, жду окно");
+         debug("команда ah отправлена, жду окно; вижу: " + windowState(player));
          schedule(now, 2000L);
          return;
       }
@@ -661,6 +661,12 @@ public final class BotAutoSell extends BotModule {
    }
 
    private int containerSlots(GenericContainerScreenHandler menu) { return Math.min(menu.getInventory().size(), Math.max(0, menu.slots.size() - 36)); }
+
+   /** Что бот реально видит вместо ожидаемого окна: класс хендлера, syncId, флаг открытого GUI. */
+   private String windowState(BotPlayer player) {
+      return "handler=" + player.currentScreenHandler.getClass().getSimpleName() + ", syncId=" + player.currentScreenHandler.syncId
+         + ", gui=" + handler().hasOpenScreen() + ", заголовок=" + (handler().getCurrentScreenTitle() == null ? "нет" : handler().getCurrentScreenTitle().getString());
+   }
    private int count(net.minecraft.item.Item item) {
       int total = 0;
       for (int i = 0; i < bot().getPlayer().getInventory().size(); i++) {
