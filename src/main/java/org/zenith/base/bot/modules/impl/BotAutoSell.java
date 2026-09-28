@@ -60,6 +60,7 @@ public final class BotAutoSell extends BotModule {
    private boolean screenTouched;
    private boolean shopCategoryOpened;
    private int craftStep;
+   private int craftSourceSlot;
 
    private final BotRotationPlayback playback = new BotRotationPlayback();
 
@@ -78,6 +79,7 @@ public final class BotAutoSell extends BotModule {
       screenTouched = false;
       shopCategoryOpened = false;
       craftStep = 0;
+      craftSourceSlot = -1;
       playback.stop();
       debug("модуль включён; режим=изумрудный меч, цена=" + Math.round(price.getCurrent()));
       super.onEnable();
@@ -136,10 +138,12 @@ public final class BotAutoSell extends BotModule {
          return;
       }
       if (findInventory(this::isSword) != null) enter(Phase.SELL, now);
-      else if (count(Items.EMERALD) >= 2 && count(Items.STICK) > 0) enter(Phase.CRAFT_SWORDS, now);
-      else if (countLogs() > 0 || countPlanks() > 0 || count(Items.STICK) > 0) enter(Phase.CRAFT_STICKS, now);
+      // Полный цикл всегда начинает с дерева. Ранее изумруды без палки вели в
+      // CRAFT_SWORDS, где бот ждал рецепт и никогда не переходил к /ah search.
+      else if (count(Items.STICK) == 0 && (countLogs() > 0 || countPlanks() > 0)) enter(Phase.CRAFT_STICKS, now);
+      else if (count(Items.STICK) == 0 && countLogs() == 0 && freeSlots() > 0) enter(Phase.BUY_LOGS, now);
       else if (count(Items.EMERALD) < 2 && freeSlots() > 0) enter(Phase.BUY_EMERALDS, now);
-      else if (countLogs() == 0 && freeSlots() > 0) enter(Phase.BUY_LOGS, now);
+      else if (count(Items.EMERALD) >= 2 && count(Items.STICK) > 0) enter(Phase.CRAFT_SWORDS, now);
       else schedule(now);
    }
 
@@ -188,7 +192,7 @@ public final class BotAutoSell extends BotModule {
       }
    }
 
-   // 1 стак бревен целиком: бревна -> доски -> палки через крафт 2x2.
+   // Бревно -> доски -> палки через сетку крафта 2x2.
    private void craftSticks(BotPlayer player, long now) {
       if (player.currentScreenHandler != player.playerScreenHandler) { player.closeScreen(); schedule(now); return; }
       int craftId = craftGridId(player);
@@ -197,17 +201,63 @@ public final class BotAutoSell extends BotModule {
          enter(Phase.INSPECT, now);
          return;
       }
-      if (craftStep == 0 && countLogs() > 0 && countPlanks() == 0 && count(Items.STICK) == 0) {
-         quickMove(player, Items.OAK_LOG, Items.SPRUCE_LOG, Items.BIRCH_LOG, Items.JUNGLE_LOG, Items.ACACIA_LOG,
-            Items.DARK_OAK_LOG, Items.MANGROVE_LOG, Items.CHERRY_LOG, Items.PALE_OAK_LOG, Items.CRIMSON_STEM, Items.WARPED_STEM);
-         debug("крафт палок: бревна в сетку");
-         craftStep = 1;
-         schedule(now);
-         return;
+      switch (craftStep) {
+         case 0 -> {
+            Slot log = findInventory(this::isLog);
+            if (log == null) { craftStep = 3; schedule(now); return; }
+            craftSourceSlot = log.id;
+            click(craftSourceSlot, 0, SlotActionType.PICKUP);
+            debug("крафт: взято бревно из слота " + craftSourceSlot);
+            craftStep = 1;
+         }
+         case 1 -> {
+            click(1, 0, SlotActionType.PICKUP);
+            debug("крафт: бревно положено в слот 2x2; забираю доски");
+            craftStep = 2;
+         }
+         case 2 -> {
+            click(0, 0, SlotActionType.QUICK_MOVE);
+            craftSourceSlot = -1;
+            craftStep = 3;
+         }
+         case 3 -> {
+            if (count(Items.STICK) > 0) { craftStep = 0; enter(Phase.INSPECT, now); return; }
+            Slot planks = findInventory(this::isPlanks);
+            if (planks == null) { craftStep = 0; enter(Phase.INSPECT, now); return; }
+            craftSourceSlot = planks.id;
+            click(craftSourceSlot, 0, SlotActionType.PICKUP);
+            debug("крафт: взяты доски из слота " + craftSourceSlot);
+            craftStep = 4;
+         }
+         case 4 -> {
+            click(1, 1, SlotActionType.PICKUP);
+            craftStep = 5;
+         }
+         case 5 -> {
+            click(3, 1, SlotActionType.PICKUP);
+            craftStep = 6;
+         }
+         case 6 -> {
+            click(craftSourceSlot, 0, SlotActionType.PICKUP);
+            debug("крафт: две доски размещены; забираю палки");
+            craftStep = 7;
+         }
+         case 7 -> {
+            click(0, 0, SlotActionType.QUICK_MOVE);
+            craftSourceSlot = -1;
+            craftStep = 8;
+         }
+         default -> {
+            if (count(Items.STICK) > 0) {
+               craftStep = 0;
+               enter(Phase.INSPECT, now);
+            } else {
+               craftStep = 0;
+               enter(Phase.RECOVER, now);
+            }
+         }
       }
-      craftStep = 0;
       schedule(now);
-      if (count(Items.STICK) > 0) enter(Phase.INSPECT, now);
    }
 
    // /shop -> клик по золотому слитку (категория) -> Shift+ПКМ по изумруду (стак).
@@ -406,13 +456,11 @@ public final class BotAutoSell extends BotModule {
       return player.playerScreenHandler != null ? 1 : -1;
    }
 
-   private void quickMove(BotPlayer player, net.minecraft.item.Item... items) {
-      for (Slot slot : player.currentScreenHandler.slots) {
-         if (slot.inventory != player.getInventory()) continue;
-         for (net.minecraft.item.Item item : items) {
-            if (slot.getStack().isOf(item)) { click(slot.id, 0, SlotActionType.QUICK_MOVE); return; }
-         }
-      }
+   private boolean isPlanks(ItemStack stack) {
+      return !stack.isEmpty() && (stack.isOf(Items.OAK_PLANKS) || stack.isOf(Items.SPRUCE_PLANKS) || stack.isOf(Items.BIRCH_PLANKS)
+         || stack.isOf(Items.JUNGLE_PLANKS) || stack.isOf(Items.ACACIA_PLANKS) || stack.isOf(Items.DARK_OAK_PLANKS)
+         || stack.isOf(Items.MANGROVE_PLANKS) || stack.isOf(Items.CHERRY_PLANKS) || stack.isOf(Items.BAMBOO_PLANKS)
+         || stack.isOf(Items.CRIMSON_PLANKS) || stack.isOf(Items.WARPED_PLANKS));
    }
 
    private void selectSlot(BotPlayer player, Slot sword) {
