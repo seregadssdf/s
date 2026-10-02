@@ -1,6 +1,10 @@
 package org.zenith.base.bot.world;
 
 import java.util.Objects;
+import net.minecraft.client.network.ClientPlayerLikeEntity;
+import net.minecraft.client.network.ClientPlayerLikeState;
+import net.minecraft.client.network.PlayerListEntry;
+import net.minecraft.client.util.DefaultSkinHelper;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityPose;
 import net.minecraft.entity.EntityType;
@@ -8,8 +12,10 @@ import net.minecraft.entity.JumpingMount;
 import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.entity.data.TrackedData;
 import net.minecraft.entity.effect.StatusEffects;
+import net.minecraft.entity.passive.ParrotEntity;
 import net.minecraft.entity.player.PlayerAbilities;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.player.SkinTextures;
 import net.minecraft.entity.vehicle.AbstractBoatEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
@@ -42,8 +48,9 @@ import net.minecraft.world.GameMode;
 import org.zenith.base.bot.net.BotPlayHandler;
 import org.zenith.core.ItemRegistry;
 
-public class BotPlayer extends PlayerEntity {
+public class BotPlayer extends PlayerEntity implements ClientPlayerLikeEntity {
    public final BotPlayHandler networkHandler;
+   private final ClientPlayerLikeState renderState = new ClientPlayerLikeState();
    public double lastX;
    public double lastBaseY;
    public double lastZ;
@@ -64,6 +71,10 @@ public class BotPlayer extends PlayerEntity {
    public boolean riding;
    public boolean falling;
    private boolean loaded;
+   /** Поворот на начало тика бота: вид бота интерполирует от него, иначе повороты модулей идут рывками по 20 Гц. */
+   public float renderYawStart;
+   public float renderPitchStart;
+   public boolean renderRotationCaptured;
 
    public BotPlayer(BotWorld var1, BotPlayHandler var2, boolean var3, boolean var4) {
       super(var1, var2.getProfile());
@@ -94,6 +105,32 @@ public class BotPlayer extends PlayerEntity {
       return this.networkHandler.getInteractionManager().getCurrentGameMode();
    }
 
+   @Override
+   public ClientPlayerLikeState getState() {
+      return this.renderState;
+   }
+
+   @Override
+   public SkinTextures getSkin() {
+      PlayerListEntry entry = this.networkHandler.getPlayerListEntry(this.getUuid());
+      return entry == null ? DefaultSkinHelper.getSkinTextures(this.getUuid()) : entry.getSkinTextures();
+   }
+
+   @Override
+   public Text getMannequinName() {
+      return Text.literal(this.getGameProfile().name());
+   }
+
+   @Override
+   public ParrotEntity.Variant getShoulderParrotVariant(boolean left) {
+      return (left ? this.getLeftShoulderParrotVariant() : this.getRightShoulderParrotVariant()).orElse(null);
+   }
+
+   @Override
+   public boolean hasExtraEars() {
+      return false;
+   }
+
    public void heal(float amount) {
    }
 
@@ -103,16 +140,37 @@ public class BotPlayer extends PlayerEntity {
    }
 
    public float getPitch(float tickDelta) {
-      return this.getPitch();
+      return this.renderRotationCaptured ? MathHelper.lerp(tickDelta, this.renderPitchStart, this.getPitch()) : this.getPitch();
    }
 
    public float getYaw(float tickDelta) {
-      return this.hasVehicle() ? super.getYaw(tickDelta) : this.getYaw();
+      if (this.hasVehicle()) {
+         return super.getYaw(tickDelta);
+      }
+
+      return this.renderRotationCaptured ? MathHelper.lerp(tickDelta, this.renderYawStart, this.getYaw()) : this.getYaw();
+   }
+
+   public void captureRenderRotation() {
+      this.renderYawStart = this.getYaw();
+      this.renderPitchStart = this.getPitch();
+      this.renderRotationCaptured = true;
+   }
+
+   /** Мышь из окна управления, как в ванилле, применяется сразу: стартовая точка интерполяции сдвигается вместе с углом. */
+   @Override
+   public void changeLookDirection(double cursorDeltaX, double cursorDeltaY) {
+      float yaw = this.getYaw();
+      float pitch = this.getPitch();
+      super.changeLookDirection(cursorDeltaX, cursorDeltaY);
+      this.renderYawStart += this.getYaw() - yaw;
+      this.renderPitchStart = MathHelper.clamp(this.renderPitchStart + (this.getPitch() - pitch), -90.0F, 90.0F);
    }
 
    public void tick() {
       if (this.isLoaded()) {
          super.tick();
+         this.renderState.tick(this.getEntityPos(), this.getVelocity());
          this.sendSneakingPacket();
          if (!this.lastPlayerInput.equals(this.input.playerInput)) {
             this.networkHandler.sendPacket(new PlayerInputC2SPacket(this.input.playerInput));

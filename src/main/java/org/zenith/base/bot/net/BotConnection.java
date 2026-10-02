@@ -236,6 +236,17 @@ public final class BotConnection extends SimpleChannelInboundHandler<Packet<?>> 
          decodertransitioner = decodertransitioner.andThen(var1x -> var1x.pipeline().addAfter("decoder", "bundler", packetbundler));
       }
 
+      decodertransitioner = decodertransitioner.andThen(ctx -> {
+         if (ctx.pipeline().get(BotPacketFilter.NAME) != null) {
+            ctx.pipeline().remove(BotPacketFilter.NAME);
+         }
+
+         BotPacketFilter filter = var1.id() == net.minecraft.network.NetworkPhase.PLAY ? BotPacketFilter.forPlay(var1) : null;
+         if (filter != null && ctx.pipeline().get("decoder") != null) {
+            ctx.pipeline().addBefore("decoder", BotPacketFilter.NAME, filter);
+         }
+      });
+
       syncUninterruptibly(this.channel.writeAndFlush(decodertransitioner));
    }
 

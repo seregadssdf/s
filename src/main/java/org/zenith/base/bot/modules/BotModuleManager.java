@@ -12,6 +12,7 @@ import org.zenith.base.bot.client.BotClient;
 import org.zenith.base.bot.modules.api.BotModule;
 import org.zenith.base.bot.modules.impl.BotAutoCapcha;
 import org.zenith.base.bot.modules.impl.BotAutoMine;
+import org.zenith.base.bot.modules.impl.BotCaptchaSave;
 import org.zenith.base.bot.modules.impl.BotWarpFarm;
 import org.zenith.base.bot.modules.impl.BotAutoSell;
 import org.zenith.module.ModuleInfo;
@@ -23,6 +24,7 @@ public final class BotModuleManager {
       BotWarpFarm.class.getAnnotation(ModuleInfo.class).name(),
       BotAutoCapcha.class.getAnnotation(ModuleInfo.class).name()
       , BotAutoSell.class.getAnnotation(ModuleInfo.class).name()
+      , BotCaptchaSave.class.getAnnotation(ModuleInfo.class).name()
    );
    public final BotClient client;
    public final Map<String, BotModule> modules = new LinkedHashMap<>();
@@ -38,7 +40,10 @@ public final class BotModuleManager {
       BotAutoCapcha botautocapcha = new BotAutoCapcha();
       this.register(botautocapcha);
       this.register(new BotAutoSell());
+      BotCaptchaSave botcaptchasave = new BotCaptchaSave();
+      this.register(botcaptchasave);
       botautocapcha.setToggled(true);
+      botcaptchasave.setToggled(true);
    }
 
    public void register(BotModule var1) {

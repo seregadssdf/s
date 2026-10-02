@@ -3,7 +3,8 @@ package org.zenith.client.screens.bot;
 enum BotScreen_BulkAction {
    CONNECT("Z", "module.bot.connect", "module.bot.connect", "module.bot.connectTo"),
    CHAT("d", "module.bot.chat", "module.bot.send", "module.bot.message"),
-   RCT("7", "module.bot.rct", "module.bot.rct", "module.bot.anarchy");
+   RCT("7", "module.bot.rct", "module.bot.rct", "module.bot.anarchy"),
+   ANARCHY("q", "module.bot.disperse", "module.bot.disperseRun", "module.bot.anarchy");
 
    final String icon;
    final String tabKey;

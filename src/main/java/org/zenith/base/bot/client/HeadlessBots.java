@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.Map.Entry;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -51,6 +52,12 @@ public final class HeadlessBots {
    private static volatile String lastAddress;
    public static final Set<String> SAVED_PROXIES = ConcurrentHashMap.newKeySet();
    public static final Map<String, HeadlessBots_ProxyPingState> PROXY_PINGS = new ConcurrentHashMap<>();
+   /** Анархия каждого бота для «разойтись по анархиям»: ник (в нижнем регистре) -> номер /anX. */
+   public static final Map<String, Integer> ANARCHY_ROUTES = new ConcurrentHashMap<>();
+   /** Диапазоны анархий для «разойтись» и лимит ботов на один номер. */
+   private static final int[][] ANARCHY_RANGES = {{103, 112}, {203, 233}, {301, 323}, {501, 514}, {901, 904}};
+   private static final int ANARCHY_BOTS_PER_NUMBER = 3;
+   private static final Random ANARCHY_RANDOM = new Random();
    public static final String PROXY_PING_TARGET_HOST = "mc.holyworld.ru";
    public static final int PROXY_PING_TARGET_PORT = 25565;
    public static final long PROXY_PING_INTERVAL_MS = 10000L;
@@ -281,6 +288,13 @@ public final class HeadlessBots {
 
       jsonobject.add("proxyPool", jsonarray1);
       jsonobject.addProperty("lastAddress", lastAddress);
+      JsonObject jsonobject3 = new JsonObject();
+
+      for (Entry<String, Integer> entry1 : ANARCHY_ROUTES.entrySet()) {
+         jsonobject3.addProperty(entry1.getKey(), entry1.getValue());
+      }
+
+      jsonobject.add("anarchyRoutes", jsonobject3);
       return jsonobject;
    }
 
@@ -386,6 +400,7 @@ public final class HeadlessBots {
       }
 
       PROFILES.remove(key(var0));
+      ANARCHY_ROUTES.remove(key(var0));
    }
 
    public static List<HeadlessBots_SavedBot> savedBots() {
@@ -583,6 +598,17 @@ public final class HeadlessBots {
          if (var0.has("lastAddress")) {
             setLastAddress(var0.get("lastAddress").getAsString());
          }
+
+         if (var0.has("anarchyRoutes") && var0.get("anarchyRoutes").isJsonObject()) {
+            JsonObject jsonobject3 = var0.getAsJsonObject("anarchyRoutes");
+
+            for (String s4 : jsonobject3.keySet()) {
+               try {
+                  ANARCHY_ROUTES.put(s4.toLowerCase(Locale.ROOT), jsonobject3.get(s4).getAsInt());
+               } catch (Exception var11) {
+               }
+            }
+         }
       }
    }
 
@@ -599,6 +625,76 @@ public final class HeadlessBots {
 
    public static String key(String var0) {
       return var0.toLowerCase(Locale.ROOT);
+   }
+
+   /** Выданная боту анархия или -1. */
+   public static int getAnarchy(String var0) {
+      Integer integer = ANARCHY_ROUTES.get(key(var0));
+      return integer == null ? -1 : integer;
+   }
+
+   /** Номер для бота: уже выданный или случайный свободный (не более 3 ботов на анархию); -1 — все заняты. */
+   public static int assignAnarchy(String var0) {
+      String s = key(var0);
+      synchronized (ANARCHY_ROUTES) {
+         Integer integer = ANARCHY_ROUTES.get(s);
+         if (integer != null) {
+            return integer;
+         }
+
+         ArrayList<Integer> arraylist = new ArrayList<>();
+
+         for (int[] is : ANARCHY_RANGES) {
+            for (int i = is[0]; i <= is[1]; i++) {
+               if (anarchyUseCount(i) < ANARCHY_BOTS_PER_NUMBER) {
+                  arraylist.add(i);
+               }
+            }
+         }
+
+         if (arraylist.isEmpty()) {
+            return -1;
+         }
+
+         int j = arraylist.get(ANARCHY_RANDOM.nextInt(arraylist.size()));
+         ANARCHY_ROUTES.put(s, j);
+         return j;
+      }
+   }
+
+   private static int anarchyUseCount(int var0) {
+      int i = 0;
+
+      for (Integer integer : ANARCHY_ROUTES.values()) {
+         if (integer == var0) {
+            i++;
+         }
+      }
+
+      return i;
+   }
+
+   /** «Разойтись по анархиям»: каждому подключённому боту — его собственная /anX; возвращает, скольким отправили. */
+   public static int disperseAnarchies() {
+      int i = 0;
+
+      for (BotClient botclient : all()) {
+         if (!botclient.isJoined()) {
+            continue;
+         }
+
+         int j = assignAnarchy(botclient.getName());
+         if (j >= 0 && botclient.sendChat("/an" + j)) {
+            i++;
+         }
+      }
+
+      return i;
+   }
+
+   /** Сброс назначений: при следующем «разойтись» номера раздадутся заново. */
+   public static void resetAnarchyList() {
+      ANARCHY_ROUTES.clear();
    }
 
    private static final class ProxyPingChannelInitializer extends ChannelInitializer<Channel> {

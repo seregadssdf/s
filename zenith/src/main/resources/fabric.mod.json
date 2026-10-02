@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "zenith",
+  "version": "1.0-SNAPSHOT",
+  "name": "Z3nith By K3ntSofts",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "icon": "assets/zenith/icons/avatar.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "org.zenith.init.ZenithInitializer"
+    ]
+  },
+  "mixins": [
+    "zenithdlc.mixins.json"
+  ],
+  "accessWidener": "zenith.accesswidener",
+  "depends": {
+    "fabricloader": "\u003e\u003d0.19.3",
+    "fabric-api": "\u003e\u003d0.141.6+1.21.11",
+    "minecraft": "1.21.11",
+    "zenith-addon-api": "*",
+    "zenith-addon-runtime": "*"
+  },
+  "jars": [
+    {
+      "file": "META-INF/jars/baritone-meteor-1.21.11.jar"
+    },
+    {
+      "file": "META-INF/jars/zenith-addon-api-1.0-SNAPSHOT.jar"
+    },
+    {
+      "file": "META-INF/jars/zenith-addon-runtime-1.0-SNAPSHOT.jar"
+    }
+  ]
+}

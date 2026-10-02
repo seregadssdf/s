@@ -102,6 +102,8 @@ public class BotScreen extends CustomScreen {
    public static final CornerRadius bulkActionModeRadius = CornerRadius.MovementInputEvent(4.0F);
    public static final float bulkActionPayloadOffsetY = 292.0F;
    public static final float bulkActionRunWidth = 64.0F;
+   /** Серверы выпадающей плашки во вкладке «Подключиться». */
+   public static final String[] CONNECT_SERVERS = {"neo.funtime.sh", "mc.holyworld.ru"};
    public static final int botNameMinLength = 3;
    public static final int botNameMaxLength = 16;
    public static final int rctMinAnarchy = 1;
@@ -246,6 +248,9 @@ public class BotScreen extends CustomScreen {
    public final SearchBox bulkActionInput = new SearchBox(new Vector2f(0.0F, 0.0F), Fonts.MEDIUM.getFont(6.0F), "Value...", 0.0F);
    public final SearchBox proxyManagerInput = new SearchBox(new Vector2f(0.0F, 0.0F), Fonts.MEDIUM.getFont(6.0F), "Proxy...", 0.0F);
    public BotScreen_BulkAction bulkAction = BotScreen_BulkAction.CONNECT;
+   /** Выбранный сервер в выпадающей плашке подключения и её раскрытое состояние. */
+   private int connectServerIndex;
+   private boolean connectDropdownOpen;
    public String moduleMenuBotName;
    public float moduleMenuX;
    public float moduleMenuY;
@@ -667,6 +672,74 @@ public class BotScreen extends CustomScreen {
          );
          var1.drawRoundedRect(var3, var4, 232.0F, 130.5F, headerRadius, new ArgbColor(10, 10, 14, 150).SprintStateEvent(var5));
       }
+
+      this.renderPreviewContainer(var1, var2, var3, var4, var5);
+   }
+
+   /** Меню, которое сервер открыл боту (аукцион, магазин, верстак), поверх превью — только слоты самого меню. */
+   public void renderPreviewContainer(HudDrawContext var1, BotClient var2, float var3, float var4, float var5) {
+      BotPlayer botplayer = var2.getPlayer();
+      org.zenith.base.bot.net.BotPlayHandler botplayhandler = var2.getPlayHandler();
+      if (botplayer == null || botplayhandler == null || !botplayhandler.hasOpenScreen() || var5 < 0.05F) {
+         return;
+      }
+
+      net.minecraft.screen.ScreenHandler screenhandler = botplayer.currentScreenHandler;
+      java.util.List<net.minecraft.screen.slot.Slot> slots = new java.util.ArrayList<>();
+      int minX = Integer.MAX_VALUE;
+      int minY = Integer.MAX_VALUE;
+      int maxX = Integer.MIN_VALUE;
+      int maxY = Integer.MIN_VALUE;
+      for (net.minecraft.screen.slot.Slot slot : screenhandler.slots) {
+         if (slot.inventory == botplayer.getInventory()) {
+            continue;
+         }
+
+         slots.add(slot);
+         minX = Math.min(minX, slot.x);
+         minY = Math.min(minY, slot.y);
+         maxX = Math.max(maxX, slot.x);
+         maxY = Math.max(maxY, slot.y);
+      }
+
+      if (slots.isEmpty()) {
+         return;
+      }
+
+      Text title = botplayhandler.getCurrentScreenTitle();
+      int contentWidth = maxX - minX + 18;
+      int contentHeight = maxY - minY + 18;
+      int panelWidth = Math.max(contentWidth, title == null ? 0 : Math.min(200, minecraftClient3.textRenderer.getWidth(title))) + 8;
+      int panelHeight = contentHeight + 16;
+      float scale = Math.min(1.0F, Math.min((232.0F - 8.0F) / panelWidth, (130.5F - 8.0F) / panelHeight));
+      float left = var3 + (232.0F - panelWidth * scale) / 2.0F;
+      float top = var4 + (130.5F - panelHeight * scale) / 2.0F;
+      int alpha = (int)(255.0F * Math.min(1.0F, var5)) << 24;
+      var1.draw();
+      var1.getMatrices().pushMatrix();
+      var1.getMatrices().translate(left, top);
+      var1.getMatrices().scale(scale, scale);
+      var1.fill(0, 0, panelWidth, panelHeight, alpha | 0x00C6C6C6);
+      if (title != null) {
+         var1.drawText(minecraftClient3.textRenderer, title, 4, 4, alpha | 0x00404040, false);
+      }
+
+      int originX = 4 - minX;
+      int originY = 14 - minY;
+      for (net.minecraft.screen.slot.Slot slot : slots) {
+         int x = originX + slot.x;
+         int y = originY + slot.y;
+         var1.fill(x - 1, y - 1, x + 17, y + 17, alpha | 0x008B8B8B);
+         var1.fill(x, y, x + 16, y + 16, alpha | 0x00555555);
+         net.minecraft.item.ItemStack itemstack = slot.getStack();
+         if (!itemstack.isEmpty()) {
+            var1.drawItemWithoutEntity(itemstack, x, y);
+            var1.drawStackOverlay(minecraftClient3.textRenderer, itemstack, x, y);
+         }
+      }
+
+      var1.getMatrices().popMatrix();
+      var1.draw();
    }
 
    public void closePreview() {
@@ -1019,9 +1092,43 @@ public class BotScreen extends CustomScreen {
 
    public void renderBulkActionPayload(HudDrawContext var1, float var2, float var3, float var4) {
       float f = var2 + 4.0F;
+      float f1 = 164.0F;
+      if (this.bulkAction == BotScreen_BulkAction.ANARCHY) {
+         var1.drawRoundedRect(f, var3, f1, 23.0F, headerRadius, addButtonColor.SprintStateEvent(var4));
+         this.drawCenteredIconText(var1, this.bulkAction.icon, tr("module.bot.disperseReset"), f, var3, f1, 23.0F, inputEmptyColor.SprintStateEvent(var4));
+         float f2 = f + f1 + 4.0F;
+         var1.drawRoundedRect(f2, var3, bulkActionRunWidth, 23.0F, headerRadius, addButtonColor.SprintStateEvent(var4));
+         this.drawCenteredIconText(var1, this.bulkAction.icon, tr(this.bulkAction.buttonKey), f2, var3, bulkActionRunWidth, 23.0F, inputEmptyColor.SprintStateEvent(var4));
+         return;
+      }
+
+      if (this.bulkAction == BotScreen_BulkAction.CONNECT) {
+         this.syncBulkActionInputRules();
+         if (this.connectDropdownOpen) {
+            for (int i = 0; i < CONNECT_SERVERS.length; i++) {
+               float f3 = var3 - 50.0F + i * 25.0F;
+               boolean flag = i == this.connectServerIndex;
+               var1.drawRoundedRect(f, f3, f1, 23.0F, headerRadius, (flag ? headerColor : addButtonColor).SprintStateEvent(var4));
+               var1.drawText(
+                  nickFont, CONNECT_SERVERS[i], f + 8.0F, centeredTextY(nickFont, f3, 23.0F),
+                  (flag ? ArgbColor.var11934 : inputEmptyColor).SprintStateEvent(var4)
+               );
+            }
+         }
+
+         var1.drawRoundedRect(f, var3, f1, 23.0F, headerRadius, headerColor.SprintStateEvent(var4));
+         var1.drawText(
+            nickFont, CONNECT_SERVERS[this.connectServerIndex], f + 8.0F, centeredTextY(nickFont, var3, 23.0F),
+            ArgbColor.var11934.SprintStateEvent(var4)
+         );
+         float f2 = f + f1 + 4.0F;
+         var1.drawRoundedRect(f2, var3, 64.0F, 23.0F, headerRadius, addButtonColor.SprintStateEvent(var4));
+         this.drawCenteredIconText(var1, this.bulkAction.icon, tr(this.bulkAction.buttonKey), f2, var3, 64.0F, 23.0F, inputEmptyColor.SprintStateEvent(var4));
+         return;
+      }
+
       this.bulkActionInput.HudInventoryPanel(tr(this.bulkAction.placeholderKey));
       this.syncBulkActionInputRules();
-      float f1 = 164.0F;
       var1.drawRoundedRect(f, var3, f1, 23.0F, headerRadius, headerColor.SprintStateEvent(var4));
       this.bulkActionInput.setWidth(f1 - 16.0F);
       this.bulkActionInput
@@ -1043,6 +1150,9 @@ public class BotScreen extends CustomScreen {
             break;
          case RCT:
             this.bulkActionInput.on23(SearchBox.MatchMode.val297);
+            this.bulkActionInput.EventItemRenderHook(2);
+            break;
+         case ANARCHY:
             this.bulkActionInput.EventItemRenderHook(2);
       }
    }
@@ -2034,6 +2144,7 @@ public class BotScreen extends CustomScreen {
    }
 
    public void executeBulkAction() {
+      this.connectDropdownOpen = false;
       switch (this.bulkAction) {
          case CONNECT:
             this.doBulkConnect();
@@ -2043,6 +2154,16 @@ public class BotScreen extends CustomScreen {
             break;
          case RCT:
             this.doBulkRct();
+            break;
+         case ANARCHY:
+            this.doBulkAnarchy();
+      }
+   }
+
+   public void doBulkAnarchy() {
+      int i = HeadlessBots.disperseAnarchies();
+      if (minecraftClient3.player != null) {
+         minecraftClient3.player.sendMessage(Text.literal("§7[Bots] §fРазошлись по анархиям: §a" + i), false);
       }
    }
 
@@ -2074,7 +2195,9 @@ public class BotScreen extends CustomScreen {
    }
 
    public void doBulkConnect() {
-      String s = this.bulkActionInput.getText().trim();
+      String s = this.bulkAction == BotScreen_BulkAction.CONNECT
+         ? CONNECT_SERVERS[this.connectServerIndex]
+         : this.bulkActionInput.getText().trim();
       if (s.isBlank()) {
          ServerInfo serverinfo = minecraftClient3.getCurrentServerEntry();
          if (serverinfo != null && serverinfo.address != null) {
@@ -2209,9 +2332,10 @@ public class BotScreen extends CustomScreen {
                      }
 
                      this.bulkAction = botscreen_bulkaction;
+                     this.connectDropdownOpen = false;
                      this.syncBulkActionInputRules();
                      this.clearMainInputFocus();
-                     this.bulkActionInput.VelocityChangeEvent(true);
+                     this.bulkActionInput.VelocityChangeEvent(this.bulkAction != BotScreen_BulkAction.ANARCHY);
                      this.bulkActionInput.CrosshairTargetUpdateEvent(false);
                      return;
                   }
@@ -2226,6 +2350,19 @@ public class BotScreen extends CustomScreen {
                float f20 = f14 + 4.0F;
                float f21 = 164.0F;
                float f9 = f20 + f21 + 4.0F;
+               if (this.bulkAction == BotScreen_BulkAction.ANARCHY) {
+                  if (var1 >= f9) {
+                     this.executeBulkAction();
+                  } else if (var1 >= f20) {
+                     HeadlessBots.resetAnarchyList();
+                     if (minecraftClient3.player != null) {
+                        minecraftClient3.player.sendMessage(Text.literal("§7[Bots] §fСписок анархий сброшен"), false);
+                     }
+                  }
+
+                  return;
+               }
+
                if (var1 >= f9) {
                   this.executeBulkAction();
                   return;
@@ -2234,7 +2371,12 @@ public class BotScreen extends CustomScreen {
                boolean flag3 = var1 < f20 + f21;
                if (flag3) {
                   this.clearMainInputFocus();
-                  this.focusTextBox(this.bulkActionInput, var1, var3);
+                  if (this.bulkAction == BotScreen_BulkAction.CONNECT) {
+                     this.connectDropdownOpen = !this.connectDropdownOpen;
+                     this.bulkActionInput.VelocityChangeEvent(false);
+                  } else {
+                     this.focusTextBox(this.bulkActionInput, var1, var3);
+                  }
                } else {
                   this.bulkActionInput.VelocityChangeEvent(false);
                }
@@ -2251,6 +2393,19 @@ public class BotScreen extends CustomScreen {
                this.searchInput.VelocityChangeEvent(false);
                this.bulkActionInput.VelocityChangeEvent(false);
                return;
+            }
+
+            if (this.bulkAction == BotScreen_BulkAction.CONNECT && this.connectDropdownOpen && var1 >= f14 + 4.0F && var1 <= f14 + 4.0F + 164.0F) {
+               for (int oi = 0; oi < CONNECT_SERVERS.length; oi++) {
+                  float optionY = f19 - 50.0F + oi * 25.0F;
+                  if (var3 >= optionY && var3 <= optionY + 23.0F) {
+                     this.connectServerIndex = oi;
+                     this.connectDropdownOpen = false;
+                     this.bulkActionInput.HudHotbarPanel(CONNECT_SERVERS[oi]);
+                     this.bulkActionInput.VelocityChangeEvent(false);
+                     return;
+                  }
+               }
             }
 
             this.bulkActionInput.VelocityChangeEvent(false);

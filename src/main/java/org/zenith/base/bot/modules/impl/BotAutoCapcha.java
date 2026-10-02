@@ -6,6 +6,9 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -19,6 +22,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.imageio.ImageIO;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.block.MapColor;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.MapIdComponent;
@@ -45,6 +49,7 @@ import org.zenith.base.bot.client.BotClient;
 import org.zenith.base.bot.modules.api.BotModule;
 import org.zenith.core.CloudApiClient;
 import org.zenith.core.FileLogger;
+import org.zenith.core.LocalCaptchaSolver;
 import org.zenith.event.BotPacketEvent;
 import org.zenith.module.Category;
 import org.zenith.module.ModuleInfo;
@@ -85,6 +90,8 @@ public final class BotAutoCapcha extends BotModule {
    public volatile long lastAttemptTime;
    public volatile int lastMapId = -1;
    public volatile int lastAttemptHash;
+   public volatile String pendingSavePath;
+   public volatile String pendingSentCode;
 
    @Override
    public void onEnable() {
@@ -109,7 +116,8 @@ public final class BotAutoCapcha extends BotModule {
       } else if (packet instanceof PlayerPositionLookS2CPacket playerpositionlooks2cpacket) {
          EntityPosition playerposition = playerpositionlooks2cpacket.change();
          this.look = new double[]{
-            playerposition.position().x, playerposition.position().y, playerposition.position().z, playerposition.yaw()
+            playerposition.position().x, playerposition.position().y, playerposition.position().z,
+            playerposition.yaw(), playerposition.pitch()
          };
       } else {
          if (packet instanceof EntitySpawnS2CPacket entityspawns2cpacket
@@ -198,6 +206,7 @@ public final class BotAutoCapcha extends BotModule {
             if (s.contains(s1)) {
                this.keywordTime = System.currentTimeMillis();
                this.log("captcha prompt: " + FileLogger.trim(var1));
+               this.markSavedWrong();
                this.tryTrigger(var2);
                return;
             }
@@ -206,6 +215,7 @@ public final class BotAutoCapcha extends BotModule {
          for (String s2 : SUCCESS_MARKERS) {
             if (s.contains(s2)) {
                this.log("captcha accepted: " + FileLogger.trim(var1));
+               this.markSavedSolved();
                this.resetState(false);
                return;
             }
@@ -280,16 +290,49 @@ public final class BotAutoCapcha extends BotModule {
             this.solving.set(false);
          } else {
             this.lastAttemptHash = i;
+            this.pendingSavePath = this.saveCaptcha(bufferedimage);
+            this.pendingSentCode = null;
             BufferedImage bufferedimage1 = resizeForApi(bufferedimage);
             EXECUTOR.submit(() -> this.solve(bufferedimage1, var1, var2));
          }
       }
    }
 
+   // Локальная нейросеть: при успехе ответ уходит сразу, облако не используется.
+   public boolean tryLocal(BufferedImage var1, BotAutoCapcha_SolveTarget var2) {
+      if (!LocalCaptchaSolver.isAvailable()) {
+         return false;
+      }
+
+      String s = LocalCaptchaSolver.solve(var1);
+      int i = this.expectedLength(var2);
+      if (!isSafeAnswer(s) || i > 0 && s.trim().length() != i) {
+         log(var2, "local NN answer rejected" + (s == null ? "" : ": " + FileLogger.trim(s)) + ", falling back to cloud");
+         return false;
+      }
+
+      String s1 = s.trim();
+      if (!this.sendAnswer(var2, s1)) {
+         log(var2, "local NN failed to send answer: " + s1);
+         return false;
+      }
+
+      log(var2, "local NN answer sent: " + s1);
+      feedback(var2, "капча решена локально -> " + s1);
+      this.pendingSentCode = s1;
+      this.markSaved("sent", s1);
+      this.resetState(false);
+      return true;
+   }
+
    public void solve(BufferedImage var1, BotAutoCapcha_SolveTarget var2, long var3) {
       String s = null;
 
       try {
+         if (this.tryLocal(var1, var2)) {
+            return;
+         }
+
          int i = 1;
 
          while (true) {
@@ -325,6 +368,8 @@ public final class BotAutoCapcha extends BotModule {
                         if (this.sendAnswer(var2, s2)) {
                            log(var2, "answer sent: " + s2);
                            feedback(var2, "капча решена -> " + s2);
+                           this.pendingSentCode = s2;
+                           this.markSaved("sent", s2);
                            this.resetState(false);
                         } else {
                            feedback(var2, "не удалось отправить ответ капчи");
@@ -390,7 +435,22 @@ public final class BotAutoCapcha extends BotModule {
          }
       }
 
-      List<int[]> list = this.choosePlane(hashmap);
+      List<int[]> list = null;
+      Integer integer = this.raycastFrame();
+      if (integer != null) {
+         double[] adouble0 = this.frames.get(integer);
+         if (adouble0 != null && this.buffers.containsKey(this.frameItems.get(integer))) {
+            list = hashmap.get(this.planeKey((int)adouble0[3], adouble0));
+            if (list != null) {
+               this.log("raycast wall: frame=" + integer + " tiles=" + list.size());
+            }
+         }
+      }
+
+      if (list == null) {
+         list = this.choosePlane(hashmap);
+      }
+
       if (list != null && !list.isEmpty()) {
          double[] adouble3 = this.frames.get(list.getFirst()[0]);
          if (adouble3 == null) {
@@ -458,6 +518,73 @@ public final class BotAutoCapcha extends BotModule {
       }
    }
 
+   public long planeKey(int facing, double[] frame) {
+      double d0 = facing >= 4 ? frame[0] : frame[2];
+      return (long)facing << 40 ^ Math.round(d0 * 4.0) & 1099511627775L;
+   }
+
+   // Рейкаст взглядом бота: возвращает id рамки, в которую попадает луч (примерно 1x1 область).
+   // Анти-капча расставляет фейковые стены вокруг бота — правильная всегда под прицелом.
+   public Integer raycastFrame() {
+      double[] adouble = this.look;
+      if (adouble == null) {
+         return null;
+      }
+
+      double d0 = Math.toRadians(adouble[3]);
+      double d1 = Math.toRadians(adouble[4]);
+      double d2 = -Math.sin(d0) * Math.cos(d1);
+      double d3 = -Math.sin(d1);
+      double d4 = Math.cos(d0) * Math.cos(d1);
+      Integer integer = null;
+      double d5 = Double.MAX_VALUE;
+
+      for (Entry<Integer, Integer> entry : this.frameItems.entrySet()) {
+         if (!this.buffers.containsKey(entry.getValue())) {
+            continue;
+         }
+
+         double[] adouble1 = this.frames.get(entry.getKey());
+         if (adouble1 == null) {
+            continue;
+         }
+
+         int i = (int)adouble1[3];
+         if (i < 2 || i > 5) {
+            continue;
+         }
+
+         // Нормаль передней стороны рамки: 2=north(-z), 3=south(+z), 4=west(-x), 5=east(+x)
+         double d6 = i == 2 ? -1.0 : i == 3 ? 1.0 : 0.0;
+         double d7 = i == 4 ? -1.0 : i == 5 ? 1.0 : 0.0;
+         if (d2 * d6 + d4 * d7 >= -0.05) {
+            continue;
+         }
+
+         double d8 = i >= 4 ? adouble1[0] + 0.5 : adouble1[2] + 0.5;
+         double d9 = i >= 4 ? d2 : d4;
+         if (Math.abs(d9) < 1.0E-4) {
+            continue;
+         }
+
+         double d10 = (d8 - (i >= 4 ? adouble[0] : adouble[2])) / d9;
+         if (d10 <= 0.0 || d10 > 48.0) {
+            continue;
+         }
+
+         double d11 = adouble[0] + d2 * d10 - (adouble1[0] + 0.5);
+         double d12 = adouble[1] + d3 * d10 - (adouble1[1] + 0.5);
+         double d13 = adouble[2] + d4 * d10 - (adouble1[2] + 0.5);
+         double d14 = i >= 4 ? d13 : d11;
+         if (Math.abs(d14) <= 0.55 && Math.abs(d12) <= 0.55 && d10 < d5) {
+            d5 = d10;
+            integer = entry.getKey();
+         }
+      }
+
+      return integer;
+   }
+
    public List<int[]> choosePlane(Map<Long, List<int[]>> var1) {
       if (var1.isEmpty()) {
          return null;
@@ -518,6 +645,55 @@ public final class BotAutoCapcha extends BotModule {
       synchronized (this.bufferLock) {
          int[] aint = this.buffers.get(var1);
          return aint == null ? null : (int[])aint.clone();
+      }
+   }
+
+   // --- Сбор датасета: каждая капча пишется в <runDir>/captcha/hard и перемаркивается по исходу ---
+
+   public String saveCaptcha(BufferedImage var1) {
+      try {
+         Path path = MinecraftClient.getInstance().runDirectory.toPath().resolve("captcha").resolve("hard");
+         Files.createDirectories(path);
+         String s = "unread_" + System.currentTimeMillis() + ".png";
+         Path path2 = path.resolve(s);
+         ImageIO.write(var1, "png", path2.toFile());
+         return path2.toString();
+      } catch (Exception var6) {
+         this.log("captcha save failed: " + rootMessage(var6));
+         return null;
+      }
+   }
+
+   public void markSaved(String var1, String var2) {
+      String s = this.pendingSavePath;
+      if (s != null && Files.exists(Path.of(s))) {
+         String s1 = Path.of(s).getFileName().toString();
+         int i = s1.indexOf('_');
+         int j = s1.lastIndexOf('.');
+         String s2 = i >= 0 && j > i ? s1.substring(i + 1, j) : String.valueOf(System.currentTimeMillis());
+         String s3 = var1 + (var2 == null ? "" : "_" + var2) + "_" + s2 + ".png";
+         Path path = Path.of(s).getParent().resolve(s3);
+         try {
+            Files.move(Path.of(s), path, StandardCopyOption.REPLACE_EXISTING);
+            this.pendingSavePath = path.toString();
+         } catch (Exception var10) {
+            this.log("captcha rename failed: " + rootMessage(var10));
+         }
+      }
+   }
+
+   public void markSavedSolved() {
+      String s = this.pendingSentCode;
+      if (s != null) {
+         this.markSaved("solved", s);
+      }
+   }
+
+   public void markSavedWrong() {
+      String s = this.pendingSentCode;
+      if (s != null) {
+         this.markSaved("wrong", s);
+         this.pendingSentCode = null;
       }
    }
 
