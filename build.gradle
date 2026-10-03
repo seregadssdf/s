@@ -45,6 +45,7 @@ sanitizedShadedRuntime.builtBy(sanitizeShadedRuntime)
 
 
 dependencies {
+    testImplementation 'junit:junit:4.13.2'
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     mappings 'net.fabricmc:yarn:1.21.11+build.6:v2'
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"

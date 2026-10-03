@@ -43,7 +43,7 @@ public final class BotModuleManager {
       BotCaptchaSave botcaptchasave = new BotCaptchaSave();
       this.register(botcaptchasave);
       botautocapcha.setToggled(true);
-      botcaptchasave.setToggled(true);
+      botcaptchasave.setToggled(false);
    }
 
    public void register(BotModule var1) {

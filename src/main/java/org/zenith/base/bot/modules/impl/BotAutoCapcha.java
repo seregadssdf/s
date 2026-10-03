@@ -47,16 +47,18 @@ import net.minecraft.network.packet.s2c.play.TitleS2CPacket;
 import org.zenith.ZenithClient;
 import org.zenith.base.bot.client.BotClient;
 import org.zenith.base.bot.modules.api.BotModule;
-import org.zenith.core.CloudApiClient;
 import org.zenith.core.FileLogger;
-import org.zenith.core.LocalCaptchaSolver;
+import org.zenith.core.OcrSpaceCaptchaSolver;
 import org.zenith.event.BotPacketEvent;
 import org.zenith.module.Category;
 import org.zenith.module.ModuleInfo;
+import org.zenith.setting.TextSetting;
 import org.zenith.utility.mixin.accessors.ItemFrameEntityAccessor;
 
-@ModuleInfo(name = "BotAutoCapcha", category = Category.MISC, description = "Автоматически решает капчу с карт через Zenith Cloud")
+@ModuleInfo(name = "BotAutoCapcha", category = Category.MISC, description = "Автоматически решает пятизначную капчу через OCR.Space")
 public final class BotAutoCapcha extends BotModule {
+   public final TextSetting ocrApiKey = new TextSetting("OCR.Space API key",
+      "Ключ OCR.Space; хранится в локальном конфиге бота", "", "Введите API-ключ").secret();
    public static final int MAP_SIZE = 128;
    public static final int API_WIDTH = 250;
    public static final int API_HEIGHT = 150;
@@ -94,20 +96,20 @@ public final class BotAutoCapcha extends BotModule {
    public volatile String pendingSentCode;
 
    @Override
-   public void onEnable() {
+   public synchronized void onEnable() {
       super.onEnable();
       this.resetState(true);
       this.log("enabled and armed");
    }
 
    @Override
-   public void onDisable() {
+   public synchronized void onDisable() {
       this.resetState(false);
       super.onDisable();
    }
 
    @EventTarget
-   public void onPacket(BotPacketEvent var1) {
+   public synchronized void onPacket(BotPacketEvent var1) {
       Packet packet = var1.ItemScroller();
       BotAutoCapcha_SolveTarget botautocapcha_solvetarget = this.currentTarget();
       if (packet instanceof GameJoinS2CPacket || packet instanceof PlayerRespawnS2CPacket) {
@@ -266,10 +268,15 @@ public final class BotAutoCapcha extends BotModule {
 
    public void launch(BotAutoCapcha_SolveTarget var1, long var2) {
       if (var2 == this.generation.get() && this.isEnabled() && this.solving.compareAndSet(false, true)) {
+         long tileTime = this.lastTileTime;
          BotAutoCapcha_Stitched botautocapcha_stitched = this.stitchCaptchaWall();
          BufferedImage bufferedimage;
          int i;
          if (botautocapcha_stitched != null) {
+            if (botautocapcha_stitched.tiles() != botautocapcha_stitched.cols() * botautocapcha_stitched.rows()) {
+               this.solving.set(false);
+               return;
+            }
             bufferedimage = botautocapcha_stitched.image();
             i = botautocapcha_stitched.hash();
             log(var1, "prepared wall " + botautocapcha_stitched.cols() + "x" + botautocapcha_stitched.rows() + " tiles=" + botautocapcha_stitched.tiles());
@@ -292,123 +299,58 @@ public final class BotAutoCapcha extends BotModule {
             this.lastAttemptHash = i;
             this.pendingSavePath = this.saveCaptcha(bufferedimage);
             this.pendingSentCode = null;
-            BufferedImage bufferedimage1 = resizeForApi(bufferedimage);
-            EXECUTOR.submit(() -> this.solve(bufferedimage1, var1, var2));
+            EXECUTOR.submit(() -> this.solve(bufferedimage, var1, var2, tileTime));
          }
       }
    }
 
-   // Локальная нейросеть: при успехе ответ уходит сразу, облако не используется.
-   public boolean tryLocal(BufferedImage var1, BotAutoCapcha_SolveTarget var2) {
-      if (!LocalCaptchaSolver.isAvailable()) {
-         return false;
-      }
-
-      String s = LocalCaptchaSolver.solve(var1);
-      int i = this.expectedLength(var2);
-      if (!isSafeAnswer(s) || i > 0 && s.trim().length() != i) {
-         log(var2, "local NN answer rejected" + (s == null ? "" : ": " + FileLogger.trim(s)) + ", falling back to cloud");
-         return false;
-      }
-
-      String s1 = s.trim();
-      if (!this.sendAnswer(var2, s1)) {
-         log(var2, "local NN failed to send answer: " + s1);
-         return false;
-      }
-
-      log(var2, "local NN answer sent: " + s1);
-      feedback(var2, "капча решена локально -> " + s1);
-      this.pendingSentCode = s1;
-      this.markSaved("sent", s1);
-      this.resetState(false);
-      return true;
-   }
-
-   public void solve(BufferedImage var1, BotAutoCapcha_SolveTarget var2, long var3) {
-      String s = null;
-
+   public void solve(BufferedImage var1, BotAutoCapcha_SolveTarget var2, long var3, long tileTime) {
       try {
-         if (this.tryLocal(var1, var2)) {
+         if (!this.isCurrentRequest(var2, var3, tileTime)) {
             return;
          }
-
-         int i = 1;
-
-         while (true) {
-            label194: {
-               label159:
-               if (i <= 3) {
-                  if (var3 != this.generation.get() || !this.isEnabled() || !var2.isConnected()) {
-                     return;
-                  }
-
-                  CloudApiClient l1i1iil111il1l1l = ZenithClient.on23().getCloudClient();
-                  if (l1i1iil111il1l1l == null || !l1i1iil111il1l1l.isConnected()) {
-                     s = "Cloud is offline";
-                     log(var2, s);
-                     feedback(var2, "облако недоступно для решения капчи");
-                     return;
-                  }
-
-                  try {
-                     log(var2, "Cloud captcha attempt " + i + "/3");
-                     int j = this.expectedLength(var2);
-                     byte[] abyte = encodePng(var1);
-                     String s1 = l1i1iil111il1l1l.on23(abyte, j, j).join();
-                     if (isSafeAnswer(s1)) {
-                        String s2 = s1.trim();
-                        if (j > 0 && s2.length() != j) {
-                           s = "answer length " + s2.length() + " != " + j;
-                           log(var2, s + ": " + FileLogger.trim(s2));
-                           Thread.sleep(1000L * i);
-                           break label194;
-                        }
-
-                        if (this.sendAnswer(var2, s2)) {
-                           log(var2, "answer sent: " + s2);
-                           feedback(var2, "капча решена -> " + s2);
-                           this.pendingSentCode = s2;
-                           this.markSaved("sent", s2);
-                           this.resetState(false);
-                        } else {
-                           feedback(var2, "не удалось отправить ответ капчи");
-                        }
-                        break;
-                     }
-
-                     if (s1 != null && !s1.isBlank()) {
-                        s = "Cloud returned an unsafe answer";
-                        log(var2, s + ": " + FileLogger.trim(s1));
-                        break label159;
-                     }
-
-                     log(var2, "Cloud returned no answer on attempt " + i);
-                  } catch (InterruptedException interruptedexception) {
-                     Thread.currentThread().interrupt();
-                     return;
-                  } catch (Exception exception) {
-                     s = rootMessage(exception);
-                     log(var2, "Cloud attempt " + i + " failed: " + s);
-                  }
-
-                  Thread.sleep(1000L * i);
-                  break label194;
-               }
-
-               feedback(var2, "капча не решена" + (s == null ? "" : " (" + s + ")"));
+         log(var2, "OCR.Space captcha request");
+         String answer = OcrSpaceCaptchaSolver.solve(encodePng(var1), this.ocrApiKey.getValue(), MinecraftClient.getInstance().runDirectory.toPath(),
+            () -> this.isCurrentRequest(var2, var3, tileTime));
+         if (!this.isCurrentRequest(var2, var3, tileTime)) {
+            log(var2, "discarded stale OCR.Space response");
+            return;
+         }
+         if (answer == null || !answer.matches("[0-9]{5}")) {
+            feedback(var2, "OCR.Space не распознал ровно 5 цифр; ответ не отправлен");
+            return;
+         }
+         synchronized (this) {
+            if (!this.isCurrentRequest(var2, var3, tileTime)) {
                return;
             }
-
-            i++;
+            if (this.sendAnswer(var2, answer)) {
+               this.pendingSentCode = answer;
+               this.markSaved("sent", answer);
+               log(var2, "OCR.Space answer sent: " + answer);
+               feedback(var2, "ответ капчи отправлен -> " + answer);
+               this.resetState(false);
+            } else {
+               feedback(var2, "не удалось отправить ответ капчи");
+            }
          }
-      } catch (InterruptedException interruptedexception1) {
+      } catch (InterruptedException exception) {
          Thread.currentThread().interrupt();
-         return;
+      } catch (Exception exception) {
+         log(var2, "OCR.Space request failed: " + exception.getClass().getSimpleName());
+         if (this.isCurrentRequest(var2, var3, tileTime)) {
+            feedback(var2, "OCR.Space недоступен: проверь ключ, лимит и соединение");
+         }
       } finally {
-         this.lastAttemptTime = System.currentTimeMillis();
-         this.solving.set(false);
+         if (var3 == this.generation.get()) {
+            this.lastAttemptTime = System.currentTimeMillis();
+            this.solving.set(false);
+         }
       }
+   }
+
+   private boolean isCurrentRequest(BotAutoCapcha_SolveTarget target, long generation, long tileTime) {
+      return generation == this.generation.get() && tileTime == this.lastTileTime && this.isEnabled() && target.isConnected();
    }
 
    public int expectedLength(BotAutoCapcha_SolveTarget var1) {
@@ -697,7 +639,7 @@ public final class BotAutoCapcha extends BotModule {
       }
    }
 
-   public void resetState(boolean var1) {
+   public synchronized void resetState(boolean var1) {
       this.generation.incrementAndGet();
       synchronized (this.bufferLock) {
          this.buffers.clear();
