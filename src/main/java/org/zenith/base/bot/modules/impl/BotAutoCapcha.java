@@ -52,13 +52,11 @@ import org.zenith.core.OcrSpaceCaptchaSolver;
 import org.zenith.event.BotPacketEvent;
 import org.zenith.module.Category;
 import org.zenith.module.ModuleInfo;
-import org.zenith.setting.TextSetting;
+import org.zenith.module.player.BotCaptcha;
 import org.zenith.utility.mixin.accessors.ItemFrameEntityAccessor;
 
 @ModuleInfo(name = "BotAutoCapcha", category = Category.MISC, description = "Автоматически решает пятизначную капчу через OCR.Space")
 public final class BotAutoCapcha extends BotModule {
-   public final TextSetting ocrApiKey = new TextSetting("OCR.Space API key",
-      "Ключ OCR.Space; хранится в локальном конфиге бота", "", "Введите API-ключ").secret();
    public static final int MAP_SIZE = 128;
    public static final int API_WIDTH = 250;
    public static final int API_HEIGHT = 150;
@@ -310,7 +308,7 @@ public final class BotAutoCapcha extends BotModule {
             return;
          }
          log(var2, "OCR.Space captcha request");
-         String answer = OcrSpaceCaptchaSolver.solve(encodePng(var1), this.ocrApiKey.getValue(), MinecraftClient.getInstance().runDirectory.toPath(),
+         String answer = OcrSpaceCaptchaSolver.solve(encodePng(var1), BotCaptcha.botCaptcha.apiKey.getValue(),
             () -> this.isCurrentRequest(var2, var3, tileTime));
          if (!this.isCurrentRequest(var2, var3, tileTime)) {
             log(var2, "discarded stale OCR.Space response");

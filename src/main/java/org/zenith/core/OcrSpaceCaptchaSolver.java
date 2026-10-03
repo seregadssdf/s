@@ -10,8 +10,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.concurrent.Semaphore;
@@ -25,18 +23,8 @@ public final class OcrSpaceCaptchaSolver {
    private OcrSpaceCaptchaSolver() {
    }
 
-   public static String solve(byte[] png, String configuredKey, Path runDirectory, BooleanSupplier current) throws IOException, InterruptedException {
+   public static String solve(byte[] png, String configuredKey, BooleanSupplier current) throws IOException, InterruptedException {
       String key = configuredKey == null ? "" : configuredKey.trim();
-      if (key.isBlank()) {
-         key = System.getenv("OCR_SPACE_API_KEY");
-      }
-      if (key == null || key.isBlank()) {
-         Path file = runDirectory.resolve("config/ocr-space.key");
-         if (!Files.isRegularFile(file)) {
-            throw new IOException("Set the OCR.Space API key in BotAutoCapcha settings");
-         }
-         key = Files.readString(file, StandardCharsets.UTF_8).trim();
-      }
       if (!key.matches("[A-Za-z0-9]{8,128}")) {
          throw new IOException("Invalid OCR.Space API key configuration");
       }

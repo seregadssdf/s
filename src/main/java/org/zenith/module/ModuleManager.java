@@ -180,6 +180,7 @@ public final class ModuleManager implements ClientProvider {
       this.on23(AutoWarden.autoWarden);
       this.on23(WarpFarm.warpFarm);
       this.on23(AutoSell.autoSell);
+      this.on23(BotCaptcha.botCaptcha);
    }
 
    public void on23(Module var1) {
