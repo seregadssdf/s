@@ -2170,10 +2170,16 @@ public class BotScreen extends CustomScreen {
    public void doBulkRct() {
       int i = this.parseRctAnarchy();
       if (i >= 0) {
+         int j = 0;
+
          for (BotClient botclient : HeadlessBots.all()) {
-            if (botclient.isJoined()) {
-               botclient.getRct().reconnect(i);
+            if (botclient.isJoined() && botclient.sendChat("/an" + i)) {
+               j++;
             }
+         }
+
+         if (minecraftClient3.player != null) {
+            minecraftClient3.player.sendMessage(Text.literal("§7[Bots] §fОтправлено §a/an" + i + "§f ботам: §a" + j), false);
          }
 
          this.bulkActionInput.VelocityChangeEvent(false);
@@ -2188,7 +2194,7 @@ public class BotScreen extends CustomScreen {
 
       try {
          int i = Integer.parseInt(s);
-         return i >= 1 && i <= 66 ? i : -1;
+         return i >= 1 && i <= 999 ? i : -1;
       } catch (NumberFormatException numberformatexception) {
          return -1;
       }
