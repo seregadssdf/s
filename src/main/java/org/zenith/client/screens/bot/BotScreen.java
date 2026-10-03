@@ -1093,6 +1093,15 @@ public class BotScreen extends CustomScreen {
    public void renderBulkActionPayload(HudDrawContext var1, float var2, float var3, float var4) {
       float f = var2 + 4.0F;
       float f1 = 164.0F;
+      if (this.bulkAction == BotScreen_BulkAction.ANARCHY) {
+         var1.drawRoundedRect(f, var3, f1, 23.0F, headerRadius, addButtonColor.SprintStateEvent(var4));
+         this.drawCenteredIconText(var1, this.bulkAction.icon, tr("module.bot.disperseReset"), f, var3, f1, 23.0F, inputEmptyColor.SprintStateEvent(var4));
+         float f2 = f + f1 + 4.0F;
+         var1.drawRoundedRect(f2, var3, bulkActionRunWidth, 23.0F, headerRadius, addButtonColor.SprintStateEvent(var4));
+         this.drawCenteredIconText(var1, this.bulkAction.icon, tr(this.bulkAction.buttonKey), f2, var3, bulkActionRunWidth, 23.0F, inputEmptyColor.SprintStateEvent(var4));
+         return;
+      }
+
       if (this.bulkAction == BotScreen_BulkAction.CONNECT) {
          this.syncBulkActionInputRules();
          if (this.connectDropdownOpen) {
@@ -1144,9 +1153,7 @@ public class BotScreen extends CustomScreen {
             this.bulkActionInput.EventItemRenderHook(2);
             break;
          case ANARCHY:
-            this.bulkActionInput.on23(SearchBox.MatchMode.val297);
             this.bulkActionInput.EventItemRenderHook(2);
-            break;
       }
    }
 
@@ -2154,24 +2161,9 @@ public class BotScreen extends CustomScreen {
    }
 
    public void doBulkAnarchy() {
-      int i = this.parseRctAnarchy();
-      if (i < 0) {
-         if (minecraftClient3.player != null) {
-            minecraftClient3.player.sendMessage(Text.literal("§7[Bots] §cВведите номер анархии в поле слева"), false);
-         }
-         return;
-      }
-
-      int j = 0;
-
-      for (BotClient botclient : HeadlessBots.all()) {
-         if (botclient.isJoined() && botclient.sendChat("/an" + i)) {
-            j++;
-         }
-      }
-
+      int i = HeadlessBots.disperseAnarchies();
       if (minecraftClient3.player != null) {
-         minecraftClient3.player.sendMessage(Text.literal("§7[Bots] §fОтправлено §a/an" + i + "§f ботам: §a" + j), false);
+         minecraftClient3.player.sendMessage(Text.literal("§7[Bots] §fРазошлись по анархиям: §a" + i), false);
       }
    }
 
@@ -2343,7 +2335,7 @@ public class BotScreen extends CustomScreen {
                      this.connectDropdownOpen = false;
                      this.syncBulkActionInputRules();
                      this.clearMainInputFocus();
-                     this.bulkActionInput.VelocityChangeEvent(true);
+                     this.bulkActionInput.VelocityChangeEvent(this.bulkAction != BotScreen_BulkAction.ANARCHY);
                      this.bulkActionInput.CrosshairTargetUpdateEvent(false);
                      return;
                   }
@@ -2358,6 +2350,19 @@ public class BotScreen extends CustomScreen {
                float f20 = f14 + 4.0F;
                float f21 = 164.0F;
                float f9 = f20 + f21 + 4.0F;
+               if (this.bulkAction == BotScreen_BulkAction.ANARCHY) {
+                  if (var1 >= f9) {
+                     this.executeBulkAction();
+                  } else if (var1 >= f20) {
+                     HeadlessBots.resetAnarchyList();
+                     if (minecraftClient3.player != null) {
+                        minecraftClient3.player.sendMessage(Text.literal("§7[Bots] §fСписок анархий сброшен"), false);
+                     }
+                  }
+
+                  return;
+               }
+
                if (var1 >= f9) {
                   this.executeBulkAction();
                   return;
