@@ -5,6 +5,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
 import java.util.function.Predicate;
+import java.util.concurrent.ThreadLocalRandom;
 import net.minecraft.block.Blocks;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.LoreComponent;
@@ -64,8 +65,12 @@ public final class AutoSellEngine {
    private static final int AH_ITEMS_SLOT = 46;
    /** Сколько слотов /ah search сканируем: первые 5 строк по 9 предметов, последнюю строку не трогаем. */
    private static final int AH_SCAN_SLOTS = 45;
-   /** Пауза между ЛКМ по лоту дерева и кликом по слоту подтверждения: сервер успевает открыть меню. */
-   private static final long WOOD_CONFIRM_WAIT_MS = 1000L;
+   /** Пауза после «ah search» до клика по лоту: человек не кликает мгновенно. */
+   private static final long WOOD_SEARCH_WAIT_MIN_MS = 2880L;
+   private static final long WOOD_SEARCH_WAIT_MAX_MS = 3233L;
+   /** Пауза между ЛКМ по лоту и кликом по слоту подтверждения: сервер успевает открыть меню. */
+   private static final long WOOD_CONFIRM_WAIT_MIN_MS = 1330L;
+   private static final long WOOD_CONFIRM_WAIT_MAX_MS = 1880L;
    private static final int AH_CONFIRM_SLOT = 0;
    /** Дороже этого лоты дерева не покупаем: сервер дешёвые проводит без окна подтверждения. */
    private static final long WOOD_MAX_PRICE = 200000L;
@@ -103,6 +108,8 @@ public final class AutoSellEngine {
    private int failures;
    private int sellFailures;
    private boolean relistPending;
+   private long searchWaitMs;
+   private long confirmWaitMs;
    private boolean craftCommandTried;
    private boolean progress;
    private int stickPlan;
@@ -997,9 +1004,14 @@ public final class AutoSellEngine {
 
             this.watchSyncId = handler.syncId;
             this.host.sendCommand("ah search дерево");
+            this.searchWaitMs = ThreadLocalRandom.current().nextLong(WOOD_SEARCH_WAIT_MIN_MS, WOOD_SEARCH_WAIT_MAX_MS + 1L);
             this.advance(1, now, SERVER_TIMEOUT_MS);
          }
          case 1 -> {
+            if (now - this.actionAt < this.searchWaitMs) {
+               return;
+            }
+
             List<Listing> affordable = new ArrayList<>();
             if (this.newContainerReady(player)) {
                for (Listing listing : woodListings(player, handler)) {
@@ -1018,6 +1030,7 @@ public final class AutoSellEngine {
                this.debug("лотов дешевле " + WOOD_MAX_PRICE + ": " + affordable.size() + ", беру " + (pick + 1) + "-й по цене за " + chosen.price());
                this.watchSyncId = handler.syncId;
                this.watchHash = containerHash(player, handler);
+               this.confirmWaitMs = ThreadLocalRandom.current().nextLong(WOOD_CONFIRM_WAIT_MIN_MS, WOOD_CONFIRM_WAIT_MAX_MS + 1L);
                // Обычный ЛКМ по лоту: шифт-клик сервер на пару тиков реально кладёт предмет в инвентарь и ломает проверку.
                this.host.clickSlot(chosen.slot(), 0, SlotActionType.PICKUP);
                this.settleSince = 0L;
@@ -1031,7 +1044,7 @@ public final class AutoSellEngine {
             }
          }
          case 2 -> {
-            if (now - this.actionAt < WOOD_CONFIRM_WAIT_MS) {
+            if (now - this.actionAt < this.confirmWaitMs) {
                return;
             }
 
