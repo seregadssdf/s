@@ -55,10 +55,7 @@ public final class BotChunkManager extends ChunkManager {
          WorldChunk worldchunk = this.chunks.getChunk(i);
          if (positionEquals(worldchunk, var1.x, var1.z)) {
             this.chunks.unloadChunk(i, worldchunk);
-            BotWorld_RenderListener botworld_renderlistener = this.world.getRenderListener();
-            if (botworld_renderlistener != null) {
-               botworld_renderlistener.onChunkChanged(var1.x, var1.z);
-            }
+            this.world.notifyChunkChanged(var1.x, var1.z);
          }
       }
    }
@@ -157,10 +154,7 @@ public final class BotChunkManager extends ChunkManager {
    }
 
    public void onLightUpdate(LightType type, ChunkSectionPos pos) {
-      BotWorld_RenderListener botworld_renderlistener = this.world.getRenderListener();
-      if (botworld_renderlistener != null) {
-         botworld_renderlistener.onSectionChanged(pos.getSectionX(), pos.getSectionY(), pos.getSectionZ());
-      }
+      this.world.notifySectionChanged(pos.getSectionX(), pos.getSectionY(), pos.getSectionZ());
    }
 
    public LongOpenHashSet getActiveSections() {

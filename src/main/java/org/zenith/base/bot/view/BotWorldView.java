@@ -115,6 +115,8 @@ public final class BotWorldView implements BotWorld_RenderListener {
          }
 
          GpuBufferSlice fog = RenderSystem.getShaderFog();
+         GpuTextureView outputColor = RenderSystem.outputColorTextureOverride;
+         GpuTextureView outputDepth = RenderSystem.outputDepthTextureOverride;
          RenderSystem.backupProjectionMatrix();
          synchronized (this.client.getRenderStateLock()) {
             float f = this.client.getTickDelta();
@@ -151,8 +153,8 @@ public final class BotWorldView implements BotWorld_RenderListener {
                RenderSystem.restoreProjectionMatrix();
                RenderSystem.setShaderFog(fog);
                this.restoreDispatchers();
-               RenderSystem.outputColorTextureOverride = null;
-               RenderSystem.outputDepthTextureOverride = null;
+               RenderSystem.outputColorTextureOverride = outputColor;
+               RenderSystem.outputDepthTextureOverride = outputDepth;
             }
 
             return true;
@@ -503,7 +505,7 @@ public final class BotWorldView implements BotWorld_RenderListener {
       this.lightmap.close();
       this.projectionBuffer.close();
       if (this.boundWorld != null) {
-         this.boundWorld.setRenderListener(null);
+         this.boundWorld.removeRenderListener(this);
          this.boundWorld = null;
       }
    }
@@ -557,7 +559,7 @@ public final class BotWorldView implements BotWorld_RenderListener {
    public void bindWorld(BotWorld var1) {
       if (this.boundWorld != var1) {
          if (this.boundWorld != null) {
-            this.boundWorld.setRenderListener(null);
+            this.boundWorld.removeRenderListener(this);
          }
 
          for (BotWorldSection botworldview_section : this.sections.values()) {
@@ -568,7 +570,7 @@ public final class BotWorldView implements BotWorld_RenderListener {
          this.dirty.clear();
          this.drainUploadsDiscarding();
          this.boundWorld = var1;
-         var1.setRenderListener(this);
+         var1.addRenderListener(this);
       }
    }
 

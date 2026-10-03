@@ -79,6 +79,29 @@ public final class BotWorld extends World {
    public boolean shouldTickTimeOfDay;
    public BotPlayer botPlayer;
    public volatile BotWorld_RenderListener renderListener;
+   private final java.util.Set<BotWorld_RenderListener> additionalRenderListeners = new java.util.concurrent.CopyOnWriteArraySet<>();
+
+   public void addRenderListener(BotWorld_RenderListener listener) {
+      this.additionalRenderListeners.add(listener);
+   }
+
+   public void removeRenderListener(BotWorld_RenderListener listener) {
+      this.additionalRenderListeners.remove(listener);
+   }
+
+   public void notifyChunkChanged(int x, int z) {
+      if (this.renderListener != null) {
+         this.renderListener.onChunkChanged(x, z);
+      }
+      this.additionalRenderListeners.forEach(listener -> listener.onChunkChanged(x, z));
+   }
+
+   public void notifySectionChanged(int x, int y, int z) {
+      if (this.renderListener != null) {
+         this.renderListener.onSectionChanged(x, y, z);
+      }
+      this.additionalRenderListeners.forEach(listener -> listener.onSectionChanged(x, y, z));
+   }
 
    public BotWorld(
       BotPlayHandler var1, Properties var2, RegistryKey<World> var3, RegistryEntry<DimensionType> var4, int var5, int var6, boolean var7, long var8, int var10
@@ -253,17 +276,11 @@ public final class BotWorld extends World {
 
    public void resetChunkColor(ChunkPos var1) {
       this.entityManager.startTicking(var1);
-      BotWorld_RenderListener botworld_renderlistener = this.renderListener;
-      if (botworld_renderlistener != null) {
-         botworld_renderlistener.onChunkChanged(var1.x, var1.z);
-      }
+      this.notifyChunkChanged(var1.x, var1.z);
    }
 
    public void onChunkUnload(long var1) {
-      BotWorld_RenderListener botworld_renderlistener = this.renderListener;
-      if (botworld_renderlistener != null) {
-         botworld_renderlistener.onSectionChanged(ChunkSectionPos.unpackX(var1), ChunkSectionPos.unpackY(var1), ChunkSectionPos.unpackZ(var1));
-      }
+      this.notifySectionChanged(ChunkSectionPos.unpackX(var1), ChunkSectionPos.unpackY(var1), ChunkSectionPos.unpackZ(var1));
    }
 
    public boolean isChunkLoaded(int chunkX, int chunkZ) {
@@ -328,6 +345,7 @@ public final class BotWorld extends World {
       if (botworld_renderlistener != null) {
          botworld_renderlistener.onBlockChanged(pos);
       }
+      this.additionalRenderListeners.forEach(listener -> listener.onBlockChanged(pos));
    }
 
    public void setBlockBreakingInfo(int entityId, BlockPos pos, int progress) {
