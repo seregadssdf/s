@@ -633,6 +633,28 @@ public final class HeadlessBots {
       return integer == null ? -1 : integer;
    }
 
+   /** Ручная анархия бота для «разойтись»: 1..999, 0 — убрать назначение. */
+   public static boolean setAnarchy(String var0, int var1) {
+      if (var0 == null || var0.isBlank()) {
+         return false;
+      }
+
+      synchronized (ANARCHY_ROUTES) {
+         if (var1 == 0) {
+            ANARCHY_ROUTES.remove(key(var0));
+         } else {
+            if (var1 < 1 || var1 > 999) {
+               return false;
+            }
+
+            ANARCHY_ROUTES.put(key(var0), var1);
+         }
+      }
+
+      savePersistentState();
+      return true;
+   }
+
    /** Номер для бота: уже выданный или случайный свободный (не более 3 ботов на анархию); -1 — все заняты. */
    public static int assignAnarchy(String var0) {
       String s = key(var0);

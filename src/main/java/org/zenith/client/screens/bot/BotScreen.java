@@ -12,6 +12,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.Set;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.hud.InGameHud;
@@ -58,6 +59,8 @@ import org.zenith.utility.render.display.base.CornerRadius;
 import org.zenith.utility.render.display.base.HudDrawContext;
 
 public class BotScreen extends CustomScreen {
+   public static final Set<String> HIDDEN_BOT_MODULES = Set.of("BotAutoMine", "BotWarpFarm", "BotAutoCapcha");
+   public static final String ANARCHY_MENU_ROW = "Анархия...";
    public static final float leftPanelWidth = 240.0F;
    public static final float rightPanelWidth = 240.0F;
    public static final float panelWidth = 480.0F;
@@ -1274,7 +1277,7 @@ public class BotScreen extends CustomScreen {
       int i = 0;
 
       for (String s : BotModuleManager.supportedModuleNames()) {
-         if (this.isBotModuleEnabled(var2, s)) {
+         if (!HIDDEN_BOT_MODULES.contains(s) && this.isBotModuleEnabled(var2, s)) {
             String s1 = this.shortModuleName(s);
             float f2 = moduleMenuFont.width(s1) + 7.0F;
             if (f + f2 > var4 || i >= 2) {
@@ -1291,7 +1294,7 @@ public class BotScreen extends CustomScreen {
 
    public void renderModuleMenu(HudDrawContext var1, float var2, float var3, float var4, ZenithStyle var5) {
       String s = this.moduleMenuBotName();
-      List<String> list = BotModuleManager.supportedModuleNames();
+      List<String> list = this.moduleMenuRows();
       if (s != null && !list.isEmpty()) {
          float f = this.moduleMenuAnimation.on23(1.0F);
          float f1 = var2 * clamp01(f);
@@ -1311,7 +1314,7 @@ public class BotScreen extends CustomScreen {
          float f5 = f4 + 18.0F;
 
          for (String s1 : list) {
-            boolean flag = this.isBotModuleEnabled(s, s1);
+            boolean flag = s1.equals(ANARCHY_MENU_ROW) ? HeadlessBots.getAnarchy(s) > 0 : this.isBotModuleEnabled(s, s1);
             boolean flag1 = var3 >= this.moduleMenuX + 4.0F && var3 <= this.moduleMenuX + 118.0F - 4.0F && var4 >= f5 && var4 <= f5 + 20.0F;
             ArgbColor i11ii1llliilllii1i1 = (flag ? var5.getPrimaryColor().getColor().EventHookWorldRender(42) : var5.getSurfaceDisableBackground().getColor())
                .Easing(var5.getPrimaryColor().getColor(), flag1 ? 0.12F : 0.0F);
@@ -1319,7 +1322,9 @@ public class BotScreen extends CustomScreen {
             ArgbColor i11ii1llliilllii1i11 = flag ? var5.getPrimaryColor().getColor() : var5.getTextSecondary().getColor();
             var1.drawText(
                moduleMenuFont,
-               fitText(moduleMenuFont, s1, 85.0F),
+               s1.equals(ANARCHY_MENU_ROW)
+                  ? fitText(moduleMenuFont, this.anarchyMenuLabel(s), 85.0F)
+                  : fitText(moduleMenuFont, s1, 85.0F),
                this.moduleMenuX + 4.0F + 6.0F,
                centeredTextY(moduleMenuFont, f5, 20.0F),
                i11ii1llliilllii1i11.SprintStateEvent(f1)
@@ -1352,6 +1357,24 @@ public class BotScreen extends CustomScreen {
       }
 
       return HeadlessBots.isModuleEnabledInProfile(var1, var2);
+   }
+
+   public List<String> moduleMenuRows() {
+      List<String> list = new ArrayList<>();
+
+      for (String s : BotModuleManager.supportedModuleNames()) {
+         if (!HIDDEN_BOT_MODULES.contains(s)) {
+            list.add(s);
+         }
+      }
+
+      list.add(ANARCHY_MENU_ROW);
+      return list;
+   }
+
+   public String anarchyMenuLabel(String var0) {
+      int i = HeadlessBots.getAnarchy(var0);
+      return i > 0 ? "Анархия: " + i : "Анархия: не задана";
    }
 
    public String shortModuleName(String var1) {
@@ -1395,7 +1418,7 @@ public class BotScreen extends CustomScreen {
 
    public boolean handleModuleMenuClick(double var1, double var3) {
       String s = this.moduleMenuBotName();
-      List<String> list = BotModuleManager.supportedModuleNames();
+      List<String> list = this.moduleMenuRows();
       if (s != null && !list.isEmpty()) {
          float f = 26.0F + list.size() * 20.0F + Math.max(0, list.size() - 1) * 3.0F;
          boolean flag = var1 >= this.moduleMenuX && var1 <= this.moduleMenuX + 118.0F && var3 >= this.moduleMenuY && var3 <= this.moduleMenuY + f;
@@ -1408,8 +1431,14 @@ public class BotScreen extends CustomScreen {
 
          for (String s1 : list) {
             if (var1 >= this.moduleMenuX + 4.0F && var1 <= this.moduleMenuX + 118.0F - 4.0F && var3 >= f1 && var3 <= f1 + 20.0F) {
-               boolean flag1 = this.isBotModuleEnabled(s, s1);
-               HeadlessBots.setModuleEnabled(s, s1, !flag1);
+               if (s1.equals(ANARCHY_MENU_ROW)) {
+                  this.closeModuleMenu();
+                  this.client.setScreen(new BotAnarchyInputScreen(this, s));
+               } else {
+                  boolean flag1 = this.isBotModuleEnabled(s, s1);
+                  HeadlessBots.setModuleEnabled(s, s1, !flag1);
+               }
+
                return true;
             }
 
