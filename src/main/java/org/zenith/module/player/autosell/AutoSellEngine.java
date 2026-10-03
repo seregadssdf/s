@@ -64,7 +64,8 @@ public final class AutoSellEngine {
    private static final int AH_ITEMS_SLOT = 46;
    /** Сколько слотов /ah search сканируем: первые 5 строк по 9 предметов, последнюю строку не трогаем. */
    private static final int AH_SCAN_SLOTS = 45;
-   /** «1 слот» меню подтверждения покупки на аукционе. */
+   /** Пауза между ЛКМ по лоту дерева и кликом по слоту подтверждения: сервер успевает открыть меню. */
+   private static final long WOOD_CONFIRM_WAIT_MS = 1000L;
    private static final int AH_CONFIRM_SLOT = 0;
    /** Дороже этого лоты дерева не покупаем: сервер дешёвые проводит без окна подтверждения. */
    private static final long WOOD_MAX_PRICE = 200000L;
@@ -1030,7 +1031,7 @@ public final class AutoSellEngine {
             }
          }
          case 2 -> {
-            if (now - this.actionAt < MENU_SWITCH_MS) {
+            if (now - this.actionAt < WOOD_CONFIRM_WAIT_MS) {
                return;
             }
 
