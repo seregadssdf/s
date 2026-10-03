@@ -19,6 +19,12 @@ public final class OcrSpaceCaptchaSolverTest {
    }
 
    public static void main(String[] args) throws Exception {
+      check(OcrSpaceCaptchaSolver.chooseAnswer("12345", "54321") == null, "Conflicting engines accepted");
+      check("06401".equals(OcrSpaceCaptchaSolver.chooseAnswer("06401", "06401")), "Matching engines rejected");
+      check("06401".equals(OcrSpaceCaptchaSolver.chooseAnswer(null, "06401")), "Engine 1 fallback rejected");
+      check(OcrSpaceCaptchaSolver.chooseAnswer(null, null) == null, "Empty engines accepted");
+      check(!OcrSpaceCaptchaSolver.safeDiagnostic("test-key\\n\n\u001b[31m", "test-key").contains("test-key"), "Diagnostic secret leak");
+      check(!OcrSpaceCaptchaSolver.safeDiagnostic("a\nb\u001b", "test-key").contains("\n"), "Diagnostic log injection");
       check("06401".equals(OcrSpaceCaptchaSolver.parseAnswer(response("06401\\r\\n"))), "Leading zero");
       for (String text : new String[]{"1234", "123456", "12O45", "/12345", "12345 67890", "12 345", ""}) {
          check(OcrSpaceCaptchaSolver.parseAnswer(response(text)) == null, "Unsafe answer accepted");
@@ -48,9 +54,20 @@ public final class OcrSpaceCaptchaSolverTest {
          exchange.sendResponseHeaders(429, -1);
          exchange.close();
       });
+      server.createContext("/engine1", exchange -> {
+         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+         byte[] data = response("06401").getBytes(StandardCharsets.UTF_8);
+         exchange.sendResponseHeaders(body.contains("OCREngine=1") ? 200 : 400, data.length);
+         exchange.getResponseBody().write(data);
+         exchange.close();
+      });
       server.start();
       try {
          String base = "http://127.0.0.1:" + server.getAddress().getPort();
+         java.util.List<String> diagnostics = new java.util.ArrayList<>();
+         check("06401".equals(OcrSpaceCaptchaSolver.request(new byte[]{1}, "test-key", URI.create(base + "/engine1"),
+            HttpClient.newHttpClient(), 1, diagnostics::add)), "Engine 1 request");
+         check(diagnostics.stream().anyMatch(s -> s.contains("ParsedText=\"06401\"")), "Missing OCR text diagnostic");
          check("12345".equals(OcrSpaceCaptchaSolver.request(new byte[]{1, 2, 3}, "test-key", URI.create(base + "/ok"),
             HttpClient.newHttpClient())), "HTTP request contract");
          try {

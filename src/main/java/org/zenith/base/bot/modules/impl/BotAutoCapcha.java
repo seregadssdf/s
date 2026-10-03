@@ -309,7 +309,8 @@ public final class BotAutoCapcha extends BotModule {
          }
          log(var2, "OCR.Space captcha request");
          String answer = OcrSpaceCaptchaSolver.solve(encodePng(var1), BotCaptcha.botCaptcha.apiKey.getValue(),
-            () -> this.isCurrentRequest(var2, var3, tileTime));
+            BotCaptcha.botCaptcha.compareEngines.isEnabled(), () -> this.isCurrentRequest(var2, var3, tileTime),
+            message -> log(var2, message));
          if (!this.isCurrentRequest(var2, var3, tileTime)) {
             log(var2, "discarded stale OCR.Space response");
             return;
@@ -335,7 +336,13 @@ public final class BotAutoCapcha extends BotModule {
       } catch (InterruptedException exception) {
          Thread.currentThread().interrupt();
       } catch (Exception exception) {
-         log(var2, "OCR.Space request failed: " + exception.getClass().getSimpleName());
+         String reason = exception instanceof java.io.IOException ? exception.getMessage() : exception.getClass().getSimpleName();
+         if (reason == null || !(reason.startsWith("OCR.Space HTTP ") || reason.equals("Invalid OCR.Space API key configuration")
+            || reason.equals("OCR.Space processing failed") || reason.equals("OCR.Space image parsing failed")
+            || reason.equals("Invalid OCR.Space response") || reason.equals("OCR.Space image must be between 1 byte and 1 MB"))) {
+            reason = exception.getClass().getSimpleName();
+         }
+         log(var2, "OCR.Space request failed: " + reason);
          if (this.isCurrentRequest(var2, var3, tileTime)) {
             feedback(var2, "OCR.Space недоступен: проверь ключ, лимит и соединение");
          }

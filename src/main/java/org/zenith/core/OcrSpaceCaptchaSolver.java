@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.concurrent.Semaphore;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 public final class OcrSpaceCaptchaSolver {
    private static final URI ENDPOINT = URI.create("https://api.ocr.space/parse/image");
@@ -23,7 +24,8 @@ public final class OcrSpaceCaptchaSolver {
    private OcrSpaceCaptchaSolver() {
    }
 
-   public static String solve(byte[] png, String configuredKey, BooleanSupplier current) throws IOException, InterruptedException {
+   public static String solve(byte[] png, String configuredKey, boolean compareEngines, BooleanSupplier current,
+      Consumer<String> diagnostics) throws IOException, InterruptedException {
       String key = configuredKey == null ? "" : configuredKey.trim();
       if (!key.matches("[A-Za-z0-9]{8,128}")) {
          throw new IOException("Invalid OCR.Space API key configuration");
@@ -33,19 +35,39 @@ public final class OcrSpaceCaptchaSolver {
          if (!current.getAsBoolean()) {
             return null;
          }
-         return request(png, key, ENDPOINT, CLIENT);
+         String first = request(png, key, ENDPOINT, CLIENT, 2, diagnostics);
+         if (!compareEngines || !current.getAsBoolean()) {
+            return first;
+         }
+         String second = request(png, key, ENDPOINT, CLIENT, 1, diagnostics);
+         if (first != null && second != null && !first.equals(second)) {
+            diagnostics.accept("OCR engines disagree; answer withheld");
+         }
+         return chooseAnswer(first, second);
       } finally {
          REQUESTS.release();
       }
    }
 
+   static String chooseAnswer(String first, String second) {
+      if (first != null && second != null && !first.equals(second)) {
+         return null;
+      }
+      return first != null ? first : second;
+   }
+
    static String request(byte[] png, String key, URI endpoint, HttpClient client) throws IOException, InterruptedException {
+      return request(png, key, endpoint, client, 2, message -> { });
+   }
+
+   static String request(byte[] png, String key, URI endpoint, HttpClient client, int engine,
+      Consumer<String> diagnostics) throws IOException, InterruptedException {
       if (png.length == 0 || png.length > 1_000_000) {
          throw new IOException("OCR.Space image must be between 1 byte and 1 MB");
       }
       String image = "data:image/png;base64," + Base64.getEncoder().encodeToString(png);
       String body = "base64Image=" + URLEncoder.encode(image, StandardCharsets.UTF_8)
-         + "&language=eng&OCREngine=2&isOverlayRequired=false&filetype=PNG";
+         + "&language=eng&OCREngine=" + engine + "&isOverlayRequired=false&filetype=PNG";
       HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(30))
          .header("apikey", key).header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
          .POST(HttpRequest.BodyPublishers.ofString(body)).build();
@@ -53,10 +75,25 @@ public final class OcrSpaceCaptchaSolver {
       if (response.statusCode() != 200) {
          throw new IOException("OCR.Space HTTP " + response.statusCode());
       }
-      return parseAnswer(response.body());
+      String answer = parseAnswer(response.body(), text -> diagnostics.accept("OCR engine " + engine
+         + " ParsedText=" + safeDiagnostic(text, key)));
+      diagnostics.accept("OCR engine " + engine + (answer == null ? " rejected: expected five digits" : " valid five-digit candidate"));
+      return answer;
    }
 
    static String parseAnswer(String body) throws IOException {
+      return parseAnswer(body, text -> { });
+   }
+
+   static String safeDiagnostic(String text, String key) {
+      String redacted = text.replace(key, "[REDACTED]");
+      StringBuilder safe = new StringBuilder();
+      redacted.codePoints().limit(160).forEach(c -> safe.appendCodePoint(Character.isISOControl(c)
+         || Character.getType(c) == Character.FORMAT ? ' ' : c));
+      return '"' + safe.toString() + '"';
+   }
+
+   static String parseAnswer(String body, Consumer<String> diagnostics) throws IOException {
       try {
          JsonObject root = JsonParser.parseString(body).getAsJsonObject();
          if (!root.has("IsErroredOnProcessing") || root.get("IsErroredOnProcessing").getAsBoolean()
@@ -75,6 +112,7 @@ public final class OcrSpaceCaptchaSolver {
             return null;
          }
          String text = result.get("ParsedText").getAsString().strip();
+         diagnostics.accept(text);
          // Do not turn multiple candidates or OCR substitutions into a chat answer.
          return text.matches("[0-9]{5}") ? text : null;
       } catch (RuntimeException exception) {
