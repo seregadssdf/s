@@ -113,6 +113,14 @@ processResources {
     }
 }
 
+tasks.register('labelCaptchas', JavaExec) {
+    group = 'captcha'
+    description = 'Разметка капч: окно с цифрами, Enter переименовывает файл'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.zenith.tools.CaptchaLabeler'
+    args 'run/captcha/hard/all'
+}
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.release = 21

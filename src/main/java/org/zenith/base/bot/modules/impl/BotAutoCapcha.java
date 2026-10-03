@@ -604,10 +604,32 @@ public final class BotAutoCapcha extends BotModule {
          String s = "unread_" + System.currentTimeMillis() + ".png";
          Path path2 = path.resolve(s);
          ImageIO.write(var1, "png", path2.toFile());
+         this.copyToInbox(path2);
          return path2.toString();
       } catch (Exception var6) {
          this.log("captcha save failed: " + rootMessage(var6));
          return null;
+      }
+   }
+
+   // Отдельная папка для ручной разметки: <runDir>/captcha/hard/all/1.png, 2.png, ...
+   private void copyToInbox(Path saved) {
+      try {
+         Path inbox = saved.getParent().resolve("all");
+         Files.createDirectories(inbox);
+         int index = 1;
+         try (var files = Files.list(inbox)) {
+            for (Path file : files.toArray(Path[]::new)) {
+               String name = file.getFileName().toString();
+               if (name.matches("[0-9]+\\.png")) {
+                  index = Math.max(index, Integer.parseInt(name.substring(0, name.length() - 4)) + 1);
+               }
+            }
+         }
+         Files.copy(saved, inbox.resolve(index + ".png"), StandardCopyOption.REPLACE_EXISTING);
+         this.log("captcha queued for labeling: " + index + ".png");
+      } catch (Exception exception) {
+         this.log("captcha inbox copy failed: " + rootMessage(exception));
       }
    }
 
