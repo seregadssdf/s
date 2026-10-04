@@ -60,6 +60,8 @@ public final class AutoSellEngine {
    private static final int CLEANUP_ATTEMPTS = 3;
    /** Свободные слоты под возврат остатков из верстака: при закрытии без места сервер выбросит их на землю. */
    private static final int CRAFT_RESERVE = 3;
+   /** Сколько свободных слотов должно оставаться после крафта или покупки: иначе цикл упирается в «нет места» и встаёт. */
+   private static final int FREE_RESERVE = 2;
    private static final double TABLE_REACH = 4.5;
    /** 47-й слот по счёту в двойном сундуке /ah. */
    private static final int AH_ITEMS_SLOT = 46;
@@ -311,12 +313,14 @@ public final class AutoSellEngine {
       }
 
       boolean hasWood = count(player, AutoSellEngine::isLog) > 0 || count(player, AutoSellEngine::isPlank) >= 2;
-      if (free > 0 && emeralds < 2) {
+      // Покупка занимает новый слот: после неё должно остаться FREE_RESERVE, иначе дальше цикл встанет.
+      int buyRoom = FREE_RESERVE + 1;
+      if (free >= buyRoom && emeralds < 2) {
          this.enter(Phase.BUY_EMERALDS, now);
-      } else if (free > 0 && sticks < 1 && !hasWood) {
+      } else if (free >= buyRoom && sticks < 1 && !hasWood) {
          this.enter(Phase.BUY_WOOD, now);
       } else {
-         this.status("не хватает места в инвентаре для крафта — освободите слоты");
+         this.status("не хватает места в инвентаре для крафта — освободите слоты (свободно: " + free + ")");
          this.nextActionAt = now + 15000L;
       }
    }
@@ -934,6 +938,12 @@ public final class AutoSellEngine {
                return;
             }
 
+            // Место могло уйти, пока шли паузы: без него покупка упрётся в полный инвентарь.
+            if (freeSlots(player) < FREE_RESERVE + 1) {
+               this.enter(Phase.INSPECT, now);
+               return;
+            }
+
             this.countBefore = count(player, AutoSellEngine::isEmerald);
             this.watchSyncId = handler.syncId;
             this.host.sendCommand("shop");
@@ -999,6 +1009,12 @@ public final class AutoSellEngine {
          case 0 -> {
             if (this.needsCleanup(player)) {
                this.cleanup(player, now);
+               return;
+            }
+
+            // Место могло уйти, пока шли паузы: без него покупка упрётся в полный инвентарь.
+            if (freeSlots(player) < FREE_RESERVE + 1) {
+               this.enter(Phase.INSPECT, now);
                return;
             }
 
@@ -1094,11 +1110,13 @@ public final class AutoSellEngine {
 
       int logs = log.getStack().getCount();
       int free = freeSlots(player);
-      if (free + 1 >= slotsFor(logs * 4)) {
+      // Стак дерева освобождает свой слот (+1), доски занимают slotsFor(logs * 4); после крафта должен остаться резерв.
+      if (free + 1 - slotsFor(logs * 4) >= FREE_RESERVE) {
          return 0;
       }
 
-      return free >= slotsFor((logs + 1) / 2 * 4) ? 1 : -1;
+      // Половина стака: слот дерева остаётся занятым, доски кладутся в новые слоты.
+      return free - slotsFor((logs + 1) / 2 * 4) >= FREE_RESERVE ? 1 : -1;
    }
 
    /** 2 — два стака досок в сетку, 1 — один стак делится пополам, 0 — палкам не хватит места. */
@@ -1112,17 +1130,19 @@ public final class AutoSellEngine {
 
       stacks.sort(Comparator.reverseOrder());
       int free = freeSlots(player);
+      // Оба стака уходят в сетку (+2 слота), палки занимают slotsFor(min * 4), остаток разных стаков вернётся (1 слот).
       if (stacks.size() >= 2) {
          int a = stacks.get(0);
          int b = stacks.get(1);
-         if (free + 2 >= slotsFor(Math.min(a, b) * 4) + (a != b ? 1 : 0)) {
+         if (free + 2 - slotsFor(Math.min(a, b) * 4) - (a != b ? 1 : 0) >= FREE_RESERVE) {
             return 2;
          }
       }
 
+      // Один стак делится пополам: его слот освобождается (+1), палки и остаток (total % 2) занимают новые.
       if (!stacks.isEmpty()) {
          int total = stacks.get(0);
-         if (total >= 2 && free + 1 >= slotsFor(total / 2 * 4) + total % 2) {
+         if (total >= 2 && free + 1 - slotsFor(total / 2 * 4) - total % 2 >= FREE_RESERVE) {
             return 1;
          }
       }
@@ -1494,6 +1514,15 @@ public final class AutoSellEngine {
       return stack.isIn(ItemTags.LOGS);
    }
 
+   /**
+    * Лот дерева: id предмета оканчивается на `_wood`/`_log` (ванильные `oak_wood`, `oak_log`, `stripped_oak_log`
+    * и т.п., а также серверные предметы без подчёркивания вроде `wood`/`log`). Доски и прочее сюда не входят.
+    */
+   private static boolean isWoodItem(ItemStack stack) {
+      String s = Registries.ITEM.getId(stack.getItem()).getPath();
+      return s.endsWith("wood") || s.endsWith("log");
+   }
+
    private static boolean isPlank(ItemStack stack) {
       return stack.isIn(ItemTags.PLANKS);
    }
@@ -1517,7 +1546,7 @@ public final class AutoSellEngine {
          ItemStack stack = handler.getSlot(i).getStack();
          if (!stack.isEmpty()) {
             long price = AutoSellText.parsePrice(loreLines(stack));
-            if (price > 0L) {
+            if (price > 0L && isWoodItem(stack)) {
                listings.add(new Listing(i, price));
             }
          }
@@ -1540,7 +1569,7 @@ public final class AutoSellEngine {
       return !allExpensive && sorted.size() >= 3 ? 2 : 0;
    }
 
-   /** Куплено ли дерево: сколько предмета с подписью выбранного лота пришло в инвентарь. */
+   /** Куплено ли дерево: сколько дерева (`_wood`/`_log` либо предмет с подписью выбранного лота) пришло в инвентарь. */
    private boolean bought(PlayerEntity player) {
       return this.boughtCount(player) > this.countBefore;
    }
@@ -1550,7 +1579,7 @@ public final class AutoSellEngine {
          return 0;
       }
 
-      return count(player, stack -> this.boughtSignature.equals(signature(stack)));
+      return count(player, stack -> this.boughtSignature.equals(signature(stack)) || isWoodItem(stack));
    }
 
    private static List<String> loreLines(ItemStack stack) {
