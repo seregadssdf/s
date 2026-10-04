@@ -54,6 +54,8 @@ public final class HeadlessBots {
    public static final Map<String, HeadlessBots_ProxyPingState> PROXY_PINGS = new ConcurrentHashMap<>();
    /** Анархия каждого бота для «разойтись по анархиям»: ник (в нижнем регистре) -> номер /anX. */
    public static final Map<String, Integer> ANARCHY_ROUTES = new ConcurrentHashMap<>();
+   /** Ручная анархия, заданная в меню управления ботами: ник (в нижнем регистре) -> номер /anX. */
+   public static final Map<String, Integer> MANUAL_ANARCHY = new ConcurrentHashMap<>();
    /** Диапазоны анархий для «разойтись» и лимит ботов на один номер. */
    private static final int[][] ANARCHY_RANGES = {{103, 112}, {203, 233}, {301, 323}, {501, 514}, {901, 904}};
    private static final int ANARCHY_BOTS_PER_NUMBER = 3;
@@ -295,6 +297,13 @@ public final class HeadlessBots {
       }
 
       jsonobject.add("anarchyRoutes", jsonobject3);
+      JsonObject jsonobject4 = new JsonObject();
+
+      for (Entry<String, Integer> entry2 : MANUAL_ANARCHY.entrySet()) {
+         jsonobject4.addProperty(entry2.getKey(), entry2.getValue());
+      }
+
+      jsonobject.add("manualAnarchy", jsonobject4);
       return jsonobject;
    }
 
@@ -401,6 +410,7 @@ public final class HeadlessBots {
 
       PROFILES.remove(key(var0));
       ANARCHY_ROUTES.remove(key(var0));
+      MANUAL_ANARCHY.remove(key(var0));
    }
 
    public static List<HeadlessBots_SavedBot> savedBots() {
@@ -609,6 +619,17 @@ public final class HeadlessBots {
                }
             }
          }
+
+         if (var0.has("manualAnarchy") && var0.get("manualAnarchy").isJsonObject()) {
+            JsonObject jsonobject4 = var0.getAsJsonObject("manualAnarchy");
+
+            for (String s5 : jsonobject4.keySet()) {
+               try {
+                  MANUAL_ANARCHY.put(s5.toLowerCase(Locale.ROOT), jsonobject4.get(s5).getAsInt());
+               } catch (Exception var12) {
+               }
+            }
+         }
       }
    }
 
@@ -627,17 +648,47 @@ public final class HeadlessBots {
       return var0.toLowerCase(Locale.ROOT);
    }
 
-   /** Выданная боту анархия или -1. */
+   /** Выданная боту анархия (ручная или назначенная) или -1. */
    public static int getAnarchy(String var0) {
-      Integer integer = ANARCHY_ROUTES.get(key(var0));
+      Integer integer = getManualAnarchy(var0);
+      if (integer == null) {
+         integer = ANARCHY_ROUTES.get(key(var0));
+      }
+
       return integer == null ? -1 : integer;
    }
 
-   /** Номер для бота: уже выданный или случайный свободный (не более 3 ботов на анархию); -1 — все заняты. */
+   /** Ручной номер анархии, заданный в меню управления ботами, или null. */
+   public static Integer getManualAnarchy(String var0) {
+      return MANUAL_ANARCHY.get(key(var0));
+   }
+
+   /** Задаёт (или снимает, когда var1 == null) ручную анархию бота и сохраняет настройку. */
+   public static void setManualAnarchy(String var0, Integer var1) {
+      String s = key(var0);
+      boolean flag;
+
+      if (var1 == null) {
+         flag = MANUAL_ANARCHY.remove(s) != null;
+      } else {
+         flag = !var1.equals(MANUAL_ANARCHY.put(s, var1));
+      }
+
+      if (flag) {
+         savePersistentState();
+      }
+   }
+
+   /** Номер для бота: ручной, уже выданный или случайный свободный (не более 3 ботов на анархию); -1 — все заняты. */
    public static int assignAnarchy(String var0) {
       String s = key(var0);
       synchronized (ANARCHY_ROUTES) {
-         Integer integer = ANARCHY_ROUTES.get(s);
+         Integer integer = MANUAL_ANARCHY.get(s);
+         if (integer != null) {
+            return integer;
+         }
+
+         integer = ANARCHY_ROUTES.get(s);
          if (integer != null) {
             return integer;
          }
@@ -671,10 +722,16 @@ public final class HeadlessBots {
          }
       }
 
+      for (Integer integer1 : MANUAL_ANARCHY.values()) {
+         if (integer1 == var0) {
+            i++;
+         }
+      }
+
       return i;
    }
 
-   /** «Разойтись по анархиям»: каждому подключённому боту — его собственная /anX; возвращает, скольким отправили. */
+   /** «Разойтись по анархиям»: каждому подключённому боту — его анархия (ручная из меню или назначенная) /anXXX; возвращает, скольким отправили. */
    public static int disperseAnarchies() {
       int i = 0;
 
@@ -692,7 +749,7 @@ public final class HeadlessBots {
       return i;
    }
 
-   /** Сброс назначений: при следующем «разойтись» номера раздадутся заново. */
+   /** Сброс автоназначений: при следующем «разойтись» номера раздадутся заново. Ручные анархии из меню не трогаются. */
    public static void resetAnarchyList() {
       ANARCHY_ROUTES.clear();
    }

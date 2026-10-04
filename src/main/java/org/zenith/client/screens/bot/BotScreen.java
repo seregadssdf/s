@@ -165,6 +165,9 @@ public class BotScreen extends CustomScreen {
    public static final float moduleMenuGap = 3.0F;
    public static final CornerRadius moduleMenuRadius = CornerRadius.MovementInputEvent(6.0F);
    public static final CornerRadius moduleMenuRowRadius = CornerRadius.MovementInputEvent(4.0F);
+   /** Поле ввода ручной анархии в контекстном меню бота. */
+   public static final float moduleMenuAnarchyHeight = 18.0F;
+   public static final int maxManualAnarchy = 999;
    public static final Font deleteIconFont = Fonts.NEW_ICONS.getFont(8.0F);
    public static final Font proxyDeleteIconFont = Fonts.NEW_ICONS.getFont(4.0F);
    public static final String deleteIcon = "2";
@@ -254,6 +257,7 @@ public class BotScreen extends CustomScreen {
    public String moduleMenuBotName;
    public float moduleMenuX;
    public float moduleMenuY;
+   public final SearchBox moduleAnarchyInput = new SearchBox(new Vector2f(0.0F, 0.0F), Fonts.MEDIUM.getFont(6.0F), "", 0.0F);
    public float connectButtonWidth;
    public boolean versionMenuOpen;
    public float versionMenuScroll;
@@ -288,6 +292,9 @@ public class BotScreen extends CustomScreen {
       this.addInput.EventItemRenderHook(16);
       this.searchInput.HudInventoryPanel(tr("module.bot.search"));
       this.bulkActionInput.EventItemRenderHook(256);
+      this.moduleAnarchyInput.HudInventoryPanel(tr("module.bot.anarchyFor"));
+      this.moduleAnarchyInput.on23(SearchBox.MatchMode.val297);
+      this.moduleAnarchyInput.EventItemRenderHook(3);
       this.proxyManagerInput.HudInventoryPanel(tr("module.bot.proxy"));
       this.proxyManagerInput.EventItemRenderHook(256);
       this.proxyManagerInput.on23(SearchBox.MatchMode.val178);
@@ -1292,11 +1299,11 @@ public class BotScreen extends CustomScreen {
    public void renderModuleMenu(HudDrawContext var1, float var2, float var3, float var4, ZenithStyle var5) {
       String s = this.moduleMenuBotName();
       List<String> list = BotModuleManager.supportedModuleNames();
-      if (s != null && !list.isEmpty()) {
+      if (s != null) {
          float f = this.moduleMenuAnimation.on23(1.0F);
          float f1 = var2 * clamp01(f);
          float f2 = this.moduleMenuY + (1.0F - f) * 6.0F;
-         float f3 = 26.0F + list.size() * 20.0F + Math.max(0, list.size() - 1) * 3.0F;
+         float f3 = moduleMenuTotalHeight(list.size());
          ShapeRenderer.ColorAnimator(var1.getMatrices(), this.moduleMenuX, f2 + 5.0F, 118.0F, f3, 18.0F, moduleMenuRadius, shadowColor.SprintStateEvent(f1));
          ShapeRenderer.on23(var1.getMatrices(), this.moduleMenuX, f2, 118.0F, f3, 16.0F, moduleMenuRadius, blurColor.SprintStateEvent(f1), true, false);
          var1.drawRoundedRect(this.moduleMenuX, f2, 118.0F, f3, moduleMenuRadius, var5.getRightBackground().getColor().SprintStateEvent(f1));
@@ -1337,9 +1344,38 @@ public class BotScreen extends CustomScreen {
             );
             f5 += 23.0F;
          }
+
+         this.renderModuleMenuAnarchyInput(var1, f5, f1, var5);
       } else {
          this.moduleMenuBotName = null;
       }
+   }
+
+   /** Смещение поля ввода анархии от верха контекстного меню бота (заголовок + строки модулей). */
+   public static float moduleMenuAnarchyOffsetY(int var0) {
+      return 22.0F + var0 * 23.0F;
+   }
+
+   /** Полная высота контекстного меню бота: заголовок, модули и поле ввода анархии. */
+   public static float moduleMenuTotalHeight(int var0) {
+      return moduleMenuAnarchyOffsetY(var0) + moduleMenuAnarchyHeight + 4.0F;
+   }
+
+   /** Поле ввода ручной анархии бота: сюда вводится номер, который уйдёт командой /anXXX при «разойтись». */
+   public void renderModuleMenuAnarchyInput(HudDrawContext var1, float var2, float var3, ZenithStyle var4) {
+      float f = this.moduleMenuX + 4.0F;
+      var1.drawRoundedRect(
+         f, var2, 110.0F, moduleMenuAnarchyHeight, moduleMenuRowRadius, var4.getSurfaceDisableBackground().getColor().SprintStateEvent(var3)
+      );
+      this.moduleAnarchyInput.setWidth(98.0F);
+      this.moduleAnarchyInput
+         .on23(
+            var1,
+            f + 6.0F,
+            centeredTextY(nickFont, var2, moduleMenuAnarchyHeight),
+            var4.getTextEnable().getColor().SprintStateEvent(var3),
+            var4.getTextSecondary().getColor().SprintStateEvent(var3)
+         );
    }
 
    public boolean isBotModuleEnabled(String var1, String var2) {
@@ -1381,46 +1417,97 @@ public class BotScreen extends CustomScreen {
       if (var1 == null) {
          this.closeModuleMenu();
       } else {
+         this.commitModuleAnarchyInput();
          this.versionMenuOpen = false;
          this.moduleMenuAnimation.setValue(0.0F);
          this.moduleMenuBotName = var1;
          this.moduleMenuX = var2 + 227.0F + 3.0F;
-         this.moduleMenuY = var3;
+         float f = moduleMenuTotalHeight(BotModuleManager.supportedModuleNames().size());
+         this.moduleMenuY = Math.max(4.0F, Math.min(var3, minecraftClient3.getWindow().getScaledHeight() - 4.0F - f));
+         this.loadModuleAnarchyInput(var1);
       }
    }
 
    public void closeModuleMenu() {
+      this.commitModuleAnarchyInput();
       this.moduleMenuBotName = null;
+   }
+
+   /** Подставляет в поле ввода ручную анархию бота (пусто — боту достанется номер при разбеге). */
+   public void loadModuleAnarchyInput(String var1) {
+      Integer integer = HeadlessBots.getManualAnarchy(var1);
+      this.moduleAnarchyInput.HudHotbarPanel(integer == null ? "" : String.valueOf(integer));
+      this.moduleAnarchyInput.EventRender(this.moduleAnarchyInput.getText().length());
+      this.moduleAnarchyInput.VelocityChangeEvent(false);
+   }
+
+   /** Сохраняет число из поля ввода для текущего бота: пусто — снять ручную анархию, мусор — вернуть прежнее значение. */
+   public void commitModuleAnarchyInput() {
+      String s = this.moduleMenuBotName();
+      if (s != null) {
+         String s1 = this.moduleAnarchyInput.getText().trim();
+         Integer integer = null;
+         if (!s1.isEmpty()) {
+            try {
+               int i = Integer.parseInt(s1);
+               if (i >= 1 && i <= maxManualAnarchy) {
+                  integer = i;
+               }
+            } catch (NumberFormatException numberformatexception) {
+            }
+         }
+
+         if (integer == null && !s1.isEmpty()) {
+            this.loadModuleAnarchyInput(s);
+         } else {
+            HeadlessBots.setManualAnarchy(s, integer);
+            this.moduleAnarchyInput.HudHotbarPanel(integer == null ? "" : String.valueOf(integer));
+            this.moduleAnarchyInput.EventRender(this.moduleAnarchyInput.getText().length());
+         }
+      }
+
+      this.moduleAnarchyInput.VelocityChangeEvent(false);
    }
 
    public boolean handleModuleMenuClick(double var1, double var3) {
       String s = this.moduleMenuBotName();
       List<String> list = BotModuleManager.supportedModuleNames();
-      if (s != null && !list.isEmpty()) {
-         float f = 26.0F + list.size() * 20.0F + Math.max(0, list.size() - 1) * 3.0F;
-         boolean flag = var1 >= this.moduleMenuX && var1 <= this.moduleMenuX + 118.0F && var3 >= this.moduleMenuY && var3 <= this.moduleMenuY + f;
-         if (!flag) {
-            this.closeModuleMenu();
-            return false;
-         }
-
-         float f1 = this.moduleMenuY + 4.0F + 18.0F;
-
-         for (String s1 : list) {
-            if (var1 >= this.moduleMenuX + 4.0F && var1 <= this.moduleMenuX + 118.0F - 4.0F && var3 >= f1 && var3 <= f1 + 20.0F) {
-               boolean flag1 = this.isBotModuleEnabled(s, s1);
-               HeadlessBots.setModuleEnabled(s, s1, !flag1);
-               return true;
-            }
-
-            f1 += 23.0F;
-         }
-
-         return true;
-      } else {
+      if (s == null) {
          this.closeModuleMenu();
          return false;
       }
+
+      float f = moduleMenuTotalHeight(list.size());
+      boolean flag = var1 >= this.moduleMenuX && var1 <= this.moduleMenuX + 118.0F && var3 >= this.moduleMenuY && var3 <= this.moduleMenuY + f;
+      if (!flag) {
+         this.closeModuleMenu();
+         return false;
+      }
+
+      float f1 = this.moduleMenuY + moduleMenuAnarchyOffsetY(list.size());
+      if (var1 >= this.moduleMenuX + 4.0F
+         && var1 <= this.moduleMenuX + 118.0F - 4.0F
+         && var3 >= f1
+         && var3 <= f1 + moduleMenuAnarchyHeight) {
+         this.clearMainInputFocus();
+         this.focusTextBox(this.moduleAnarchyInput, var1, var3);
+         return true;
+      }
+
+      this.commitModuleAnarchyInput();
+      float f2 = this.moduleMenuY + 4.0F + 18.0F;
+
+      for (String s1 : list) {
+         if (var1 >= this.moduleMenuX + 4.0F && var1 <= this.moduleMenuX + 118.0F - 4.0F && var3 >= f2 && var3 <= f2 + 20.0F) {
+            boolean flag1 = this.isBotModuleEnabled(s, s1);
+            HeadlessBots.setModuleEnabled(s, s1, !flag1);
+            return true;
+         }
+
+         f2 += 23.0F;
+      }
+
+      return true;
    }
 
    public int selectedProtocolVersion() {
@@ -1986,6 +2073,9 @@ public class BotScreen extends CustomScreen {
       this.addInput.VelocityChangeEvent(false);
       this.searchInput.VelocityChangeEvent(false);
       this.bulkActionInput.VelocityChangeEvent(false);
+      if (this.moduleAnarchyInput.isSelected()) {
+         this.commitModuleAnarchyInput();
+      }
    }
 
    public boolean isMultiSelectDown() {
@@ -2092,6 +2182,7 @@ public class BotScreen extends CustomScreen {
          || this.addInput.isSelected()
          || this.searchInput.isSelected()
          || this.bulkActionInput.isSelected()
+         || this.moduleAnarchyInput.isSelected()
          || this.proxyManagerInput.isSelected();
    }
 
@@ -2162,8 +2253,31 @@ public class BotScreen extends CustomScreen {
 
    public void doBulkAnarchy() {
       int i = HeadlessBots.disperseAnarchies();
+      StringBuilder stringbuilder = new StringBuilder();
+      int j = 0;
+
+      for (String s : HeadlessBots.allNames()) {
+         if (HeadlessBots.isOnline(s)) {
+            int k = HeadlessBots.getAnarchy(s);
+            if (k >= 0) {
+               if (j == 4) {
+                  stringbuilder.append("§7, ...");
+                  break;
+               }
+
+               if (j > 0) {
+                  stringbuilder.append("§7, ");
+               }
+
+               stringbuilder.append("§f").append(s).append("§7=§a/an").append(k);
+               j++;
+            }
+         }
+      }
+
       if (minecraftClient3.player != null) {
-         minecraftClient3.player.sendMessage(Text.literal("§7[Bots] §fРазошлись по анархиям: §a" + i), false);
+         String s1 = stringbuilder.isEmpty() ? "" : " §7(" + stringbuilder + ")";
+         minecraftClient3.player.sendMessage(Text.literal("§7[Bots] §fРазошлись по анархиям: §a" + i + s1), false);
       }
    }
 
@@ -2529,6 +2643,17 @@ public class BotScreen extends CustomScreen {
 
    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
       if (!this.closing && this.screenAnimation.isDone()) {
+         if (this.moduleAnarchyInput.isSelected()) {
+            if (keyCode == 257 || keyCode == 335 || keyCode == 256) {
+               this.commitModuleAnarchyInput();
+               return true;
+            }
+
+            if (this.moduleAnarchyInput.keyPressed(keyCode, scanCode, modifiers)) {
+               return true;
+            }
+         }
+
          if (this.proxyManagerInput.isSelected()) {
             if (keyCode == 257 || keyCode == 335) {
                this.addProxyFromManager();
@@ -2612,6 +2737,8 @@ public class BotScreen extends CustomScreen {
    public boolean charTyped(char chr, int modifiers) {
       if (this.closing || !this.screenAnimation.isDone()) {
          return false;
+      } else if (this.moduleAnarchyInput.charTyped(chr, modifiers)) {
+         return true;
       } else if (this.chatInput.charTyped(chr, modifiers)) {
          return true;
       } else if (this.connectInput.charTyped(chr, modifiers)) {
