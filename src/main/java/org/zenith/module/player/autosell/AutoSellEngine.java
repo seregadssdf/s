@@ -62,6 +62,13 @@ public final class AutoSellEngine {
    private static final int CRAFT_RESERVE = 3;
    /** Сколько свободных слотов должно оставаться после крафта или покупки: иначе цикл упирается в «нет места» и встаёт. */
    private static final int FREE_RESERVE = 2;
+   /** Забитый инвентарь: сколько случайных предметов выбрасываем за один заход, пока слоты не начнут освобождаться. */
+   private static final int MAX_SPACE_DROPS = 3;
+   /** Слоты после выбросов не растут (сервер не принял бросок) — повторяем серию не чаще, чем раз в минуту. */
+   private static final long SPACE_DROP_RETRY_MS = 60000L;
+   /** Пауза после выброса предмета: серверу нужно время подтвердить освободившийся слот. */
+   private static final long SPACE_DROP_WAIT_MIN_MS = 1200L;
+   private static final long SPACE_DROP_WAIT_MAX_MS = 2000L;
    private static final double TABLE_REACH = 4.5;
    /** 47-й слот по счёту в двойном сундуке /ah. */
    private static final int AH_ITEMS_SLOT = 46;
@@ -124,6 +131,10 @@ public final class AutoSellEngine {
    private String boughtSignature;
    private String lastStatus;
    private long lastStatusAt;
+   /** Сколько было свободных слотов при последнем выбросе: рост = прогресс, тишина = сервер бросок не принял. */
+   private int spaceDropFree = -1;
+   private int spaceDrops;
+   private long spaceDropRetryAt;
 
    private enum Phase {
       STOPPED,
@@ -159,6 +170,9 @@ public final class AutoSellEngine {
       this.nextActionAt = 0L;
       this.nextIdleTurnAt = 0L;
       this.lastStatus = null;
+      this.spaceDropFree = -1;
+      this.spaceDrops = 0;
+      this.spaceDropRetryAt = 0L;
       this.aim.cancel();
       this.debug("включён; режим: изумрудный меч, цена: " + this.price());
    }
@@ -320,9 +334,54 @@ public final class AutoSellEngine {
       } else if (free >= buyRoom && sticks < 1 && !hasWood) {
          this.enter(Phase.BUY_WOOD, now);
       } else {
+         if (free != this.spaceDropFree) {
+            this.spaceDropFree = free;
+            this.spaceDrops = 0;
+         }
+
+         // Инвентарь забит: случайный предмет (не изумруды и не дерево) выбрасывается на землю, чтобы цикл поехал дальше.
+         if ((this.spaceDrops < MAX_SPACE_DROPS || now >= this.spaceDropRetryAt) && this.dropForSpace(player, now, free)) {
+            return;
+         }
+
          this.status("не хватает места в инвентаре для крафта — освободите слоты (свободно: " + free + ")");
          this.nextActionAt = now + 15000L;
       }
+   }
+
+   /**
+    * Забитый инвентарь: выбрасываем на землю случайный предмет из основного инвентаря или хотбара, кроме изумрудов
+    * и дерева (`_wood`/`_log`) — без них цикл не восстановить. false, если бросать нечего.
+    */
+   private boolean dropForSpace(PlayerEntity player, long now, int free) {
+      // Бросок шлём только в свой инвентарь: открытого меню и предмета на курсоре тут быть не должно.
+      if (containerOpen(player) || !player.currentScreenHandler.getCursorStack().isEmpty()) {
+         return false;
+      }
+
+      List<Slot> candidates = new ArrayList<>();
+      for (Slot slot : player.playerScreenHandler.slots) {
+         if (slot.id != RESULT_SLOT && isPlayerStorage(player, slot) && !slot.getStack().isEmpty()
+            && !isEmerald(slot.getStack()) && !isWoodItem(slot.getStack())) {
+            candidates.add(slot);
+         }
+      }
+
+      if (candidates.isEmpty()) {
+         return false;
+      }
+
+      Slot pick = candidates.get(this.random.nextInt(candidates.size()));
+      String name = pick.getStack().getName().getString();
+      // button 1 = весь стак: слот освобождается целиком (button 0 в ванили бросает одну штуку).
+      this.host.clickSlot(pick.id, 1, SlotActionType.THROW);
+      if (++this.spaceDrops >= MAX_SPACE_DROPS) {
+         this.spaceDropRetryAt = now + SPACE_DROP_RETRY_MS;
+      }
+
+      this.status("нет места в инвентаре — выбрасываю «" + name + "» (свободно: " + free + ")");
+      this.nextActionAt = now + this.randomMs(SPACE_DROP_WAIT_MIN_MS, SPACE_DROP_WAIT_MAX_MS);
+      return true;
    }
 
    private void sell(PlayerEntity player, long now) {
