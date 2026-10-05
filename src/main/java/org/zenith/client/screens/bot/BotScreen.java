@@ -120,6 +120,8 @@ public class BotScreen extends CustomScreen {
    public static final float serverIconGap = 4.0F;
    public static final CornerRadius serverIconRadius = CornerRadius.MovementInputEvent(2.0F);
    public static final ArgbColor listColor = new ArgbColor(14, 14, 16, 61);
+   /** Тёмный текст на очень белой плашке выбранной строки списка. */
+   public static final ArgbColor listSelectedText = new ArgbColor(14, 14, 16, 255);
    public static final float avatarSize = 15.0F;
    public static final CornerRadius avatarRadius = CornerRadius.MovementInputEvent(1.9565217F);
    public static final float rightHeaderWidth = 232.0F;
@@ -1212,11 +1214,14 @@ public class BotScreen extends CustomScreen {
       float f3 = var7 * f1;
       float f4 = f + (1.0F - f1) * 6.0F;
       float f5 = var4 + 4.0F;
-      var1.drawRoundedRect(f5, f4, 227.0F, 23.0F, headerRadius, listColor.SprintStateEvent(f3));
       float f6 = botscreen_rowanim.select.on23(this.selectedNames.contains(var2) ? 1.0F : 0.0F);
-      var1.drawRoundedRect(f5, f4, 23.0F, 23.0F, headerRadius, listColor.SprintStateEvent(f3));
+      // Выбранная строка: плашка становится очень белой, а белый текст на ней — тёмным, иначе он на ней не читается.
+      ArgbColor listPlate = listColor.Easing(ArgbColor.var11934, f6);
+      ArgbColor serverLabelColor = ArgbColor.var11934.Easing(listSelectedText, f6);
+      var1.drawRoundedRect(f5, f4, 227.0F, 23.0F, headerRadius, listPlate.SprintStateEvent(f3));
+      var1.drawRoundedRect(f5, f4, 23.0F, 23.0F, headerRadius, listPlate.SprintStateEvent(f3));
       float f7 = f5 + 227.0F - 64.0F;
-      var1.drawRoundedRect(f7, f4, 64.0F, 23.0F, headerRadius, listColor.SprintStateEvent(f3));
+      var1.drawRoundedRect(f7, f4, 64.0F, 23.0F, headerRadius, listPlate.SprintStateEvent(f3));
       if (flag) {
          boolean flag3 = !flag1 && var8 >= f7 && var8 <= f7 + 64.0F && var9 >= f4 && var9 <= f4 + 23.0F && var9 >= var5 && var9 <= var6;
          float f8 = botscreen_rowanim.disc.on23(flag3 ? 1.0F : 0.0F);
@@ -1237,7 +1242,7 @@ public class BotScreen extends CustomScreen {
                f12 += 11.0F;
             }
 
-            var1.drawText(nickFont, s1, f12, centeredTextY(nickFont, f13, 23.0F), ArgbColor.var11934.SprintStateEvent(f14));
+            var1.drawText(nickFont, s1, f12, centeredTextY(nickFont, f13, 23.0F), serverLabelColor.SprintStateEvent(f14));
          }
 
          if (f8 > 0.001F) {
@@ -1259,8 +1264,9 @@ public class BotScreen extends CustomScreen {
          float f18 = nickFont.width(s2);
          float f19 = 2.0F;
          float f25 = f7 + (64.0F - f16 - f19 - f18) / 2.0F;
-         var1.drawText(connectIconFont, "]", f25, centeredTextY(connectIconFont, f4, 23.0F), inputEmptyColor.SprintStateEvent(f3));
-         var1.drawText(nickFont, s2, f25 + f16 + f19, centeredTextY(nickFont, f4, 23.0F), inputEmptyColor.SprintStateEvent(f3));
+         ArgbColor offlineColor = inputEmptyColor.Easing(listSelectedText, f6);
+         var1.drawText(connectIconFont, "]", f25, centeredTextY(connectIconFont, f4, 23.0F), offlineColor.SprintStateEvent(f3));
+         var1.drawText(nickFont, s2, f25 + f16 + f19, centeredTextY(nickFont, f4, 23.0F), offlineColor.SprintStateEvent(f3));
       }
 
       boolean flag4 = !flag1 && var8 >= f5 && var8 <= f5 + 23.0F && var9 >= f4 && var9 <= f4 + 23.0F && var9 >= var5 && var9 <= var6;
