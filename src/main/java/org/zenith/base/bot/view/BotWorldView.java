@@ -94,6 +94,8 @@ public final class BotWorldView implements BotWorld_RenderListener {
    public final CameraRenderState cameraState = new CameraRenderState();
    public final RawProjectionMatrix projectionBuffer = new RawProjectionMatrix("Zenith bot preview");
    public SimpleFramebuffer fbo;
+   /** Радиус загружаемых секций вокруг бота. Меньше — дешевле для стены камер. */
+   public final int sectionRadius;
    public volatile BotWorld boundWorld;
    public boolean loggedRenderError;
    public volatile String lastError;
@@ -168,14 +170,15 @@ public final class BotWorldView implements BotWorld_RenderListener {
       int k = ChunkSectionPos.getSectionCoord(MathHelper.floor(var2.getZ()));
       int l = ChunkSectionPos.getSectionCoord(var1.getBottomY());
       int i1 = ChunkSectionPos.getSectionCoord(var1.getTopYInclusive());
+      final int radius = this.sectionRadius;
       this.sections
          .entrySet()
          .removeIf(
             var3x -> {
                long l2 = var3x.getKey();
-               boolean flag = Math.abs(ChunkSectionPos.unpackX(l2) - i) > 5
-                  || Math.abs(ChunkSectionPos.unpackZ(l2) - k) > 5
-                  || Math.abs(ChunkSectionPos.unpackY(l2) - j) > 5;
+               boolean flag = Math.abs(ChunkSectionPos.unpackX(l2) - i) > radius
+                  || Math.abs(ChunkSectionPos.unpackZ(l2) - k) > radius
+                  || Math.abs(ChunkSectionPos.unpackY(l2) - j) > radius;
                if (flag) {
                   var3x.getValue().closeBuffers();
                }
@@ -184,10 +187,10 @@ public final class BotWorldView implements BotWorld_RenderListener {
             }
          );
 
-      for (int j1 = i - 5; j1 <= i + 5; j1++) {
-         for (int k1 = k - 5; k1 <= k + 5; k1++) {
-            int l1 = Math.max(j - 5, l);
-            int i2 = Math.min(j + 5, i1);
+      for (int j1 = i - radius; j1 <= i + radius; j1++) {
+         for (int k1 = k - radius; k1 <= k + radius; k1++) {
+            int l1 = Math.max(j - radius, l);
+            int i2 = Math.min(j + radius, i1);
 
             for (int j2 = l1; j2 <= i2; j2++) {
                long k2 = ChunkSectionPos.asLong(j1, j2, k1);
@@ -421,9 +424,14 @@ public final class BotWorldView implements BotWorld_RenderListener {
    }
 
    public BotWorldView(BotClient var1) {
+      this(var1, 5);
+   }
+
+   public BotWorldView(BotClient var1, int var2) {
       this.client = var1;
-      ThreadFactory threadfactory = var2 -> {
-         Thread thread = new Thread(var2, "bot-mesher-" + var1.getName());
+      this.sectionRadius = Math.max(1, Math.min(8, var2));
+      ThreadFactory threadfactory = var3 -> {
+         Thread thread = new Thread(var3, "bot-mesher-" + var1.getName());
          thread.setDaemon(true);
          return thread;
       };

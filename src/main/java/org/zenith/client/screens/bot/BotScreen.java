@@ -169,6 +169,9 @@ public class BotScreen extends CustomScreen {
    public static final float moduleMenuAnarchyHeight = 18.0F;
    public static final int maxManualAnarchy = 999;
    public static final Font deleteIconFont = Fonts.NEW_ICONS.getFont(8.0F);
+   /** Кнопка «Камеры» в шапке левой панели — стена видов от всех ботов. */
+   public static final float camerasButtonWidth = 56.0F;
+   public static final float camerasButtonX = 4.0F + 232.0F - 56.0F;
    public static final Font proxyDeleteIconFont = Fonts.NEW_ICONS.getFont(4.0F);
    public static final String deleteIcon = "2";
    public static final ArgbColor deleteColor = new ArgbColor(255, 64, 64, 255);
@@ -453,6 +456,21 @@ public class BotScreen extends CustomScreen {
          float f31 = var2 + 4.0F + (232.0F - f30 - 3.0F - f29) / 2.0F;
          var1.drawText(botIconFont, "P", f31, centeredTextY(botIconFont, var3 + 4.0F, 23.0F), zenithstyle.getPrimaryColor().getColor().SprintStateEvent(var4));
          var1.drawText(nickFont, "Bot", f31 + f30 + 3.0F, centeredTextY(nickFont, var3 + 4.0F, 23.0F), ArgbColor.var11934.SprintStateEvent(var4));
+         float f34 = var2 + camerasButtonX;
+         boolean flag3 = var5 >= f34 && var5 <= f34 + camerasButtonWidth && var6 >= var3 + 4.0F && var6 <= var3 + 27.0F;
+         var1.drawRoundedRect(f34, var3 + 4.0F, camerasButtonWidth, 23.0F, headerRadius, zenithstyle.getPanelLeftBackground().getColor().SprintStateEvent(var4));
+         if (flag3) {
+            var1.drawRoundedRect(f34, var3 + 4.0F, camerasButtonWidth, 23.0F, headerRadius, new ArgbColor(255, 255, 255, 14).SprintStateEvent(var4));
+         }
+
+         String s6 = tr("module.bot.cameras");
+         var1.drawText(
+            nickFont,
+            s6,
+            f34 + (camerasButtonWidth - nickFont.width(s6)) / 2.0F,
+            centeredTextY(nickFont, var3 + 4.0F, 23.0F),
+            zenithstyle.getTextEnable().getColor().SprintStateEvent(var4)
+         );
          BotClient botclient = this.selectedClient();
          boolean flag2 = botclient != null && botclient.isJoined();
          float f12 = var2 + 319.0F;
@@ -2405,6 +2423,12 @@ public class BotScreen extends CustomScreen {
                return;
             }
 
+            float f34 = f14 + camerasButtonX;
+            if (var1 >= f34 && var1 <= f34 + camerasButtonWidth && var3 >= f15 + 4.0F && var3 <= f15 + 27.0F) {
+               minecraftClient3.setScreen(new BotCamerasScreen());
+               return;
+            }
+
             float f16 = f15 + 31.0F;
             boolean flag6 = var3 >= f16 && var3 <= f16 + 23.0F;
             float f17 = f14 + 4.0F;
@@ -2589,6 +2613,7 @@ public class BotScreen extends CustomScreen {
             if (flag9 && var1 >= f26) {
                BotClient botclient1 = this.selectedClient();
                if (botclient1 != null && botclient1.isJoined()) {
+                  BotCamerasScreen.fromCameras = false;
                   minecraftClient3.setScreen(new BotControlScreen(botclient1.getName()));
                } else {
                   this.doConnect();
