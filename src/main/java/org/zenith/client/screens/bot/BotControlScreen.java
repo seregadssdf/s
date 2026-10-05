@@ -734,7 +734,22 @@ public class BotControlScreen extends CustomScreen {
       }
    }
 
+   /** Открытие инвентаря/контейнера бота не должно ронять игру: ошибки рисовки идём в лог. */
    public void renderContainer(HudDrawContext var1, BotPlayer var2, ScreenHandler var3, int var4, int var5) {
+      try {
+         this.renderContainerInner(var1, var2, var3, var4, var5);
+      } catch (Throwable throwable) {
+         if (!LOGGED_CONTAINER_FAILURE) {
+            LOGGED_CONTAINER_FAILURE = true;
+            System.err.println("[BotControlScreen] container render failed:");
+            throwable.printStackTrace();
+         }
+      }
+   }
+
+   private static boolean LOGGED_CONTAINER_FAILURE;
+
+   public void renderContainerInner(HudDrawContext var1, BotPlayer var2, ScreenHandler var3, int var4, int var5) {
       var1.drawRoundedRect(0.0F, 0.0F, this.width, this.height, CornerRadius.var159, new ArgbColor(0, 0, 0, 120));
       BotControlScreen_ContainerLayout botcontrolscreen_containerlayout = this.layoutFor(var2, var3);
       int i = (this.width - botcontrolscreen_containerlayout.width()) / 2;
@@ -785,7 +800,9 @@ public class BotControlScreen extends CustomScreen {
          );
       }
 
-      if (var3 == var2.playerScreenHandler) {
+      // Модель игрока рисуется только при живом локальном игроке: ванильный рендер
+      // (метки, фичи) требует MinecraftClient.player и падает без него.
+      if (var3 == var2.playerScreenHandler && minecraftClient3.player != null) {
          BotClient botclient = this.boundClient;
          BotPlayerGuiRender.drawEntity(
             var1, i + 26, j + 8, i + 75, j + 78, 30, 0.0625F, var4, var5, var2, botclient != null ? botclient.getPlayHandler() : null
@@ -832,7 +849,7 @@ public class BotControlScreen extends CustomScreen {
          var1.getMatrices().popMatrix();
       }
 
-      if (slot2 != null && slot2.hasStack() && itemstack.isEmpty()) {
+      if (slot2 != null && slot2.hasStack() && itemstack.isEmpty() && var2.getWorld() != null) {
          ItemStack itemstack1 = slot2.getStack();
          List<Text> list = itemstack1.getTooltip(
             TooltipContext.create(var2.getWorld()), var2, minecraftClient3.options.advancedItemTooltips ? TooltipType.ADVANCED : TooltipType.BASIC
@@ -1067,7 +1084,7 @@ public class BotControlScreen extends CustomScreen {
 
             return true;
          } else {
-            minecraftClient3.setScreen(new BotScreen());
+            minecraftClient3.setScreen(BotCamerasScreen.claimFromCameras() ? new BotCamerasScreen() : new BotScreen());
             return true;
          }
       } else if (keyCode == 69) {

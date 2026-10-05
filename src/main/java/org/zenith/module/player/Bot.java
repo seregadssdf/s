@@ -42,7 +42,17 @@ public final class Bot extends Module {
    @EventTarget(3)
    public void on23(EventRenderScreenHook var1) {
       if (minecraftClient3.currentScreen instanceof BotScreen botscreen) {
-         botscreen.renderTop(var1.WarpFarm(), var1.WarpFarm().getMouseX(), var1.WarpFarm().getMouseY());
+         try {
+            botscreen.renderTop(var1.WarpFarm(), var1.WarpFarm().getMouseX(), var1.WarpFarm().getMouseY());
+         } catch (Throwable throwable) {
+            if (!RENDER_LOGGED) {
+               RENDER_LOGGED = true;
+               System.err.println("[Bot] bot screen render failed:");
+               throwable.printStackTrace();
+            }
+         }
       }
    }
+
+   private static boolean RENDER_LOGGED;
 }

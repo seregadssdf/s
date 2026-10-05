@@ -16,23 +16,36 @@ public final class BotPlayerGuiRender {
       float f = (var1 + var3) / 2.0F;
       float f1 = (var2 + var4) / 2.0F;
       var0.enableScissor(var1, var2, var3, var4);
-      float f2 = (float)Math.atan((f - var7) / 40.0F);
-      float f3 = (float)Math.atan((f1 - var8) / 40.0F);
-      Quaternionf quaternionf = new Quaternionf().rotateZ((float) Math.PI);
-      Quaternionf cameraRotation = new Quaternionf().rotateX(f3 * 20.0F * (float)(Math.PI / 180.0));
-      quaternionf.mul(cameraRotation);
-      RENDERER.fillState(var9, BotPlayerRenderer.resolveSkin(var9, var10), 1.0F, var9.getX(), var9.getY(), var9.getZ(), false);
-      PlayerEntityRenderState state = RENDERER.state;
-      state.light = 15728880;
-      state.shadowPieces.clear();
-      state.outlineColor = 0;
-      state.bodyYaw = 180.0F + f2 * 20.0F;
-      state.relativeHeadYaw = f2 * 20.0F;
-      state.pitch = -f3 * 20.0F;
-      float f9 = var9.getScale();
-      Vector3f vector3f = new Vector3f(0.0F, var9.getHeight() / 2.0F + var6 * f9, 0.0F);
-      float f10 = var5 / f9;
-      var0.addEntity(state, f10, vector3f, quaternionf, cameraRotation, var1, var2, var3, var4);
-      var0.disableScissor();
+
+      try {
+         float f2 = (float)Math.atan((f - var7) / 40.0F);
+         float f3 = (float)Math.atan((f1 - var8) / 40.0F);
+         Quaternionf quaternionf = new Quaternionf().rotateZ((float) Math.PI);
+         Quaternionf cameraRotation = new Quaternionf().rotateX(f3 * 20.0F * (float)(Math.PI / 180.0));
+         quaternionf.mul(cameraRotation);
+         RENDERER.fillState(var9, BotPlayerRenderer.resolveSkin(var9, var10), 1.0F, var9.getX(), var9.getY(), var9.getZ(), false);
+         PlayerEntityRenderState state = RENDERER.state;
+         state.light = 15728880;
+         state.shadowPieces.clear();
+         state.outlineColor = 0;
+         state.bodyYaw = 180.0F + f2 * 20.0F;
+         state.relativeHeadYaw = f2 * 20.0F;
+         state.pitch = -f3 * 20.0F;
+         float f9 = var9.getScale();
+         Vector3f vector3f = new Vector3f(0.0F, var9.getHeight() / 2.0F + var6 * f9, 0.0F);
+         float f10 = var5 / f9;
+         var0.addEntity(state, f10, vector3f, quaternionf, cameraRotation, var1, var2, var3, var4);
+      } catch (Throwable throwable) {
+         // Открытие инвентаря бота не должно ронять игру: модель просто не отрисуется.
+         if (!LOGGED_FAILURE) {
+            LOGGED_FAILURE = true;
+            System.err.println("[BotPlayerGuiRender] drawEntity failed:");
+            throwable.printStackTrace();
+         }
+      } finally {
+         var0.disableScissor();
+      }
    }
+
+   private static boolean LOGGED_FAILURE;
 }

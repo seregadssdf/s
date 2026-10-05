@@ -87,7 +87,15 @@ final class BotPlayerRenderer {
          return;
       }
 
-      renderer.updateRenderState(player, this.state, tickDelta);
+      try {
+         renderer.updateRenderState(player, this.state, tickDelta);
+      } catch (Throwable throwable) {
+         // Vanilla внутри updateRenderState/hasLabel обращается к MinecraftClient.player
+         // (Entity.isInvisibleTo(player.isSpectator())) — без локального игрока (меню/экран
+         // ботов вне мира) это NPE. Состояние к этому моменту заполнено почти полностью,
+         // поэтому просто рендерим его как есть, не роняя игру.
+      }
+
       this.state.skinTextures = skin;
       this.state.x = MathHelper.lerp(tickDelta, player.lastRenderX, player.getX());
       this.state.y = MathHelper.lerp(tickDelta, player.lastRenderY, player.getY());
